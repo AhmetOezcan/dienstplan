@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import './App.css'
 
-const employees = ['Ahmet', 'Ali', 'Mehmet', 'Fatma']
+const initialEmployees = ['Ahmet', 'Ali', 'Mehmet', 'Fatma']
 
-const customers = [
+const initialCustomers = [
   { name: 'Hotel Alpenblick', color: '#2563eb' },
   { name: 'Praxis Huber', color: '#10b981' },
   { name: 'Baeckerei Kaya', color: '#f59e0b' },
@@ -34,7 +34,55 @@ const timeSlots = [
 ]
 
 function App() {
+  const [employees, setEmployees] = useState(initialEmployees)
+  const [customers, setCustomers] = useState(initialCustomers)
   const [selectedEmployee, setSelectedEmployee] = useState(null)
+  const [isEmployeeFormOpen, setIsEmployeeFormOpen] = useState(false)
+  const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false)
+  const [newEmployeeName, setNewEmployeeName] = useState('')
+  const [newCustomerName, setNewCustomerName] = useState('')
+  const [newCustomerColor, setNewCustomerColor] = useState('#2563eb')
+
+  const resetEmployeeForm = () => {
+    setNewEmployeeName('')
+    setIsEmployeeFormOpen(false)
+  }
+
+  const resetCustomerForm = () => {
+    setNewCustomerName('')
+    setNewCustomerColor('#2563eb')
+    setIsCustomerFormOpen(false)
+  }
+
+  const handleEmployeeSubmit = (event) => {
+    event.preventDefault()
+
+    const employeeName = newEmployeeName.trim()
+
+    if (!employeeName) {
+      return
+    }
+
+    setEmployees((currentEmployees) => [...currentEmployees, employeeName])
+    resetEmployeeForm()
+  }
+
+  const handleCustomerSubmit = (event) => {
+    event.preventDefault()
+
+    const customerName = newCustomerName.trim()
+    const customerColor = newCustomerColor.trim() || '#2563eb'
+
+    if (!customerName) {
+      return
+    }
+
+    setCustomers((currentCustomers) => [
+      ...currentCustomers,
+      { name: customerName, color: customerColor },
+    ])
+    resetCustomerForm()
+  }
 
   return (
     <main className="app">
@@ -52,14 +100,15 @@ function App() {
             type="button"
             className="icon-button"
             aria-label="Mitarbeiter erstellen"
+            onClick={() => setIsEmployeeFormOpen(true)}
           >
             +
           </button>
         </div>
         <div className="employee-bar">
-          {employees.map((employee) => (
+          {employees.map((employee, index) => (
             <button
-              key={employee}
+              key={`${employee}-${index}`}
               type="button"
               className={`employee-button${
                 selectedEmployee === employee ? ' employee-button-active' : ''
@@ -71,6 +120,33 @@ function App() {
             </button>
           ))}
         </div>
+        {isEmployeeFormOpen ? (
+          <form className="form-card" onSubmit={handleEmployeeSubmit}>
+            <div className="form-field">
+              <label htmlFor="employee-name">Mitarbeitername</label>
+              <input
+                id="employee-name"
+                type="text"
+                value={newEmployeeName}
+                onChange={(event) => setNewEmployeeName(event.target.value)}
+                placeholder="Neuer Mitarbeiter"
+                required
+              />
+            </div>
+            <div className="form-actions">
+              <button type="submit" className="action-button form-button">
+                Speichern
+              </button>
+              <button
+                type="button"
+                className="secondary-button form-button"
+                onClick={resetEmployeeForm}
+              >
+                Abbrechen
+              </button>
+            </div>
+          </form>
+        ) : null}
       </section>
 
       <section className="panel controls-panel" aria-label="Planungsparameter">
@@ -123,9 +199,9 @@ function App() {
           <section className="panel sidebar-panel">
             <h2>Kunden</h2>
             <div className="customer-list">
-              {customers.map((customer) => (
+              {customers.map((customer, index) => (
                 <article
-                  key={customer.name}
+                  key={`${customer.name}-${index}`}
                   className="customer-card"
                   style={{ backgroundColor: customer.color }}
                 >
@@ -137,10 +213,52 @@ function App() {
 
           <section className="panel sidebar-panel">
             <div className="action-list">
-              <button type="button" className="action-button">
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => setIsCustomerFormOpen(true)}
+              >
                 Kunde erstellen
               </button>
             </div>
+            {isCustomerFormOpen ? (
+              <form className="form-card" onSubmit={handleCustomerSubmit}>
+                <div className="form-field">
+                  <label htmlFor="customer-name">Kundenname</label>
+                  <input
+                    id="customer-name"
+                    type="text"
+                    value={newCustomerName}
+                    onChange={(event) => setNewCustomerName(event.target.value)}
+                    placeholder="Reinigung Maier"
+                    required
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="customer-color">Farbe</label>
+                  <input
+                    id="customer-color"
+                    type="text"
+                    value={newCustomerColor}
+                    onChange={(event) => setNewCustomerColor(event.target.value)}
+                    placeholder="#2563eb"
+                    required
+                  />
+                </div>
+                <div className="form-actions">
+                  <button type="submit" className="action-button form-button">
+                    Speichern
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button form-button"
+                    onClick={resetCustomerForm}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            ) : null}
           </section>
         </aside>
       </section>

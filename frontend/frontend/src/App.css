@@ -89,6 +89,43 @@ input {
   gap: 12px;
 }
 
+.form-card {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-field + .form-field {
+  margin-top: 14px;
+}
+
+.form-field label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.form-field input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .icon-button {
   width: 40px;
   height: 40px;
@@ -220,6 +257,10 @@ input {
   gap: 12px;
 }
 
+.customer-list {
+  margin-top: 16px;
+}
+
 .customer-card {
   border-radius: 16px;
   padding: 16px;
@@ -236,6 +277,20 @@ input {
   border-radius: 14px;
   background: #0f172a;
   color: #ffffff;
+  padding: 14px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.form-button {
+  width: auto;
+}
+
+.secondary-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
   padding: 14px 16px;
   font-weight: 600;
   cursor: pointer;
@@ -269,6 +324,14 @@ input {
 
   .schedule-header {
     flex-direction: column;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-button {
+    width: 100%;
   }
 
   .control-group input {
