@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import './App.css'
 
 const employees = ['Ahmet', 'Ali', 'Mehmet', 'Fatma']
@@ -33,6 +34,8 @@ const timeSlots = [
 ]
 
 function App() {
+  const [selectedEmployee, setSelectedEmployee] = useState(null)
+
   return (
     <main className="app">
       <header className="page-header">
@@ -55,7 +58,15 @@ function App() {
         </div>
         <div className="employee-bar">
           {employees.map((employee) => (
-            <button key={employee} type="button" className="employee-button">
+            <button
+              key={employee}
+              type="button"
+              className={`employee-button${
+                selectedEmployee === employee ? ' employee-button-active' : ''
+              }`}
+              aria-pressed={selectedEmployee === employee}
+              onClick={() => setSelectedEmployee(employee)}
+            >
               {employee}
             </button>
           ))}
@@ -75,7 +86,13 @@ function App() {
 
       <section className="content">
         <div className="panel schedule-panel">
-          <h2>Dienstplan</h2>
+          <div className="schedule-header">
+            <h2>Dienstplan</h2>
+            <p className="selected-employee">
+              Ausgewaehlter Mitarbeiter:{' '}
+              <span>{selectedEmployee ?? 'Kein Mitarbeiter ausgewaehlt'}</span>
+            </p>
+          </div>
           <div className="table-wrapper">
             <table className="schedule-table">
               <thead>
