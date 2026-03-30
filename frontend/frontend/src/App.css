@@ -36,6 +36,16 @@ input {
   margin-bottom: 24px;
 }
 
+.status-message {
+  margin-bottom: 16px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.status-error {
+  color: #b91c1c;
+}
+
 .page-header h1 {
   font-size: clamp(2rem, 4vw, 2.8rem);
   font-weight: 700;
@@ -89,6 +99,11 @@ input {
   gap: 12px;
 }
 
+.empty-state {
+  color: #64748b;
+  font-weight: 500;
+}
+
 .form-card {
   margin-top: 16px;
   padding-top: 16px;
@@ -137,6 +152,13 @@ input {
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
+}
+
+.icon-button:disabled,
+.action-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .employee-button {
@@ -235,6 +257,7 @@ input {
 .schedule-table tbody td {
   height: 58px;
   background: #ffffff;
+  vertical-align: top;
 }
 
 .time-cell {
@@ -242,6 +265,21 @@ input {
   background: #f8fafc;
   font-weight: 700;
   color: #475569;
+}
+
+.schedule-cell-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schedule-entry {
+  display: block;
+  border-radius: 10px;
+  padding: 6px 8px;
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .sidebar {
