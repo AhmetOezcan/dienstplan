@@ -38,6 +38,21 @@ textarea {
   margin-bottom: 24px;
 }
 
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .status-message {
   margin-bottom: 16px;
   color: #475569;
@@ -73,6 +88,32 @@ textarea {
 .panel h2 {
   font-size: 1.1rem;
   font-weight: 600;
+}
+
+.auth-app {
+  max-width: 760px;
+}
+
+.auth-panel {
+  padding: 28px;
+}
+
+.auth-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-form {
+  margin-top: 20px;
+}
+
+.auth-actions {
+  justify-content: flex-start;
+}
+
+.auth-note {
+  margin-top: 18px;
 }
 
 .employee-panel,
@@ -187,6 +228,30 @@ textarea {
 .secondary-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.session-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4ee;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.session-label,
+.session-meta {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.session-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
 }
 
 .employee-button {
@@ -364,6 +429,10 @@ textarea {
   width: auto;
 }
 
+.header-button {
+  width: auto;
+}
+
 .secondary-button {
   border: 1px solid #cbd5e1;
   border-radius: 14px;
@@ -375,6 +444,15 @@ textarea {
 }
 
 @media (max-width: 980px) {
+  .page-header-row {
+    flex-direction: column;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .content {
     grid-template-columns: 1fr;
   }
@@ -413,6 +491,10 @@ textarea {
   }
 
   .form-button {
+    width: 100%;
+  }
+
+  .header-button {
     width: 100%;
   }
 

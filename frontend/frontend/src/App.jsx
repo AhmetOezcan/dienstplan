@@ -27,10 +27,70 @@ const timeSlots = [
 const timeOptions = [...timeSlots, '18:00']
 const dayOrder = Object.fromEntries(weekdays.map((day, index) => [day, index]))
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const AUTH_STORAGE_KEY = 'dienstplan_auth_session'
+
+function createEmptyAuthSession() {
+  return {
+    accessToken: '',
+    user: null,
+  }
+}
+
+function getStoredAuthSession() {
+  if (typeof window === 'undefined') {
+    return createEmptyAuthSession()
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(AUTH_STORAGE_KEY)
+    if (!storedValue) {
+      return createEmptyAuthSession()
+    }
+
+    const parsedValue = JSON.parse(storedValue)
+
+    if (
+      typeof parsedValue?.accessToken !== 'string' ||
+      !parsedValue?.user ||
+      typeof parsedValue.user.id !== 'number'
+    ) {
+      return createEmptyAuthSession()
+    }
+
+    return {
+      accessToken: parsedValue.accessToken,
+      user: parsedValue.user,
+    }
+  } catch {
+    return createEmptyAuthSession()
+  }
+}
+
+function persistAuthSession(session) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
+}
+
+function clearStoredAuthSession() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(AUTH_STORAGE_KEY)
+}
+
+function createInitialLoginForm() {
+  return {
+    email: '',
+    password: '',
+  }
+}
 
 function createInitialEmployeeForm() {
   return {
-    userId: '',
     firstName: '',
     lastName: '',
     phone: '',
@@ -53,18 +113,24 @@ function createInitialScheduleForm(customerId = '') {
     dayOfWeek: weekdays[0],
     startTime: timeSlots[0],
     endTime: timeOptions[1],
-    createdByUserId: '',
     notes: '',
   }
 }
 
 async function apiRequest(path, options = {}) {
+  const { accessToken, headers, ...fetchOptions } = options
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    ...headers,
+  }
+
+  if (accessToken) {
+    requestHeaders.Authorization = `Bearer ${accessToken}`
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    ...fetchOptions,
+    headers: requestHeaders,
   })
 
   if (response.status === 204) {
@@ -82,7 +148,9 @@ async function apiRequest(path, options = {}) {
         ? payload.detail
         : `API request failed with status ${response.status}`
 
-    throw new Error(message)
+    const error = new Error(message)
+    error.status = response.status
+    throw error
   }
 
   return payload
@@ -150,6 +218,9 @@ function sortScheduleEntries(items) {
 }
 
 function App() {
+  const initialAuthSession = getStoredAuthSession()
+  const [authSession, setAuthSession] = useState(initialAuthSession)
+  const [loginForm, setLoginForm] = useState(createInitialLoginForm)
   const [employees, setEmployees] = useState([])
   const [customers, setCustomers] = useState([])
   const [scheduleEntries, setScheduleEntries] = useState([])
@@ -161,13 +232,30 @@ function App() {
   const [scheduleForm, setScheduleForm] = useState(createInitialScheduleForm)
   const [year, setYear] = useState(2026)
   const [calendarWeek, setCalendarWeek] = useState(14)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(Boolean(initialAuthSession.accessToken))
   const [loadError, setLoadError] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
 
+  const authToken = authSession.accessToken
+  const currentUser = authSession.user
+  const isAuthenticated = Boolean(authToken && currentUser)
+
   useEffect(() => {
+    if (!isAuthenticated) {
+      setEmployees([])
+      setCustomers([])
+      setScheduleEntries([])
+      setSelectedEmployeeId(null)
+      setIsEmployeeFormOpen(false)
+      setIsScheduleFormOpen(false)
+      setIsLoading(false)
+      return
+    }
+
     const abortController = new AbortController()
 
     const loadData = async () => {
@@ -176,9 +264,18 @@ function App() {
 
       try {
         const [loadedEmployees, loadedCustomers, loadedScheduleEntries] = await Promise.all([
-          apiRequest('/employees', { signal: abortController.signal }),
-          apiRequest('/customers', { signal: abortController.signal }),
-          apiRequest('/schedule_entries', { signal: abortController.signal }),
+          apiRequest('/employees', {
+            signal: abortController.signal,
+            accessToken: authToken,
+          }),
+          apiRequest('/customers', {
+            signal: abortController.signal,
+            accessToken: authToken,
+          }),
+          apiRequest('/schedule_entries', {
+            signal: abortController.signal,
+            accessToken: authToken,
+          }),
         ])
 
         const sortedEmployees = sortEmployees(loadedEmployees)
@@ -219,6 +316,20 @@ function App() {
           return
         }
 
+        if (error.status === 401 || error.status === 403) {
+          clearStoredAuthSession()
+          setAuthSession(createEmptyAuthSession())
+          setEmployees([])
+          setCustomers([])
+          setScheduleEntries([])
+          setSelectedEmployeeId(null)
+          setIsEmployeeFormOpen(false)
+          setIsScheduleFormOpen(false)
+          setLoadError('')
+          setAuthError('Sitzung abgelaufen. Bitte erneut anmelden.')
+          return
+        }
+
         setLoadError(error.message || 'Daten konnten nicht vom Backend geladen werden.')
       } finally {
         if (!abortController.signal.aborted) {
@@ -232,7 +343,7 @@ function App() {
     return () => {
       abortController.abort()
     }
-  }, [])
+  }, [authToken, isAuthenticated])
 
   useEffect(() => {
     setScheduleForm((currentForm) => {
@@ -280,6 +391,20 @@ function App() {
   const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
   const endTimeOptions = timeOptions.filter((value) => value > scheduleForm.startTime)
 
+  const resetAuthenticatedApp = (message = '') => {
+    clearStoredAuthSession()
+    setAuthSession(createEmptyAuthSession())
+    setEmployees([])
+    setCustomers([])
+    setScheduleEntries([])
+    setSelectedEmployeeId(null)
+    setIsEmployeeFormOpen(false)
+    setIsScheduleFormOpen(false)
+    setLoadError('')
+    setAuthError(message)
+    setIsLoading(false)
+  }
+
   const resetEmployeeForm = () => {
     setEmployeeForm(createInitialEmployeeForm())
     setIsEmployeeFormOpen(false)
@@ -294,21 +419,57 @@ function App() {
     setIsScheduleFormOpen(false)
   }
 
+  const handleLoginSubmit = async (event) => {
+    event.preventDefault()
+
+    const email = loginForm.email.trim()
+    const password = loginForm.password
+
+    if (!email || !password || isLoggingIn) {
+      return
+    }
+
+    setIsLoggingIn(true)
+    setAuthError('')
+
+    try {
+      const loginResponse = await apiRequest('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      })
+
+      const nextSession = {
+        accessToken: loginResponse.access_token,
+        user: loginResponse.user,
+      }
+
+      persistAuthSession(nextSession)
+      setAuthSession(nextSession)
+      setLoginForm({
+        email: loginResponse.user.email,
+        password: '',
+      })
+      setLoadError('')
+    } catch (error) {
+      setAuthError(error.message || 'Anmeldung fehlgeschlagen.')
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  const handleLogout = () => {
+    resetAuthenticatedApp('')
+  }
+
   const handleEmployeeSubmit = async (event) => {
     event.preventDefault()
 
-    const userId = Number(employeeForm.userId)
     const firstName = employeeForm.firstName.trim()
     const lastName = employeeForm.lastName.trim()
     const phone = employeeForm.phone.trim()
     const notes = employeeForm.notes.trim()
 
     if (isSavingEmployee) {
-      return
-    }
-
-    if (!Number.isInteger(userId) || userId <= 0) {
-      setLoadError('Bitte eine gueltige User-ID fuer den Mitarbeiter angeben.')
       return
     }
 
@@ -322,8 +483,8 @@ function App() {
     try {
       const createdEmployee = await apiRequest('/employees', {
         method: 'POST',
+        accessToken: authToken,
         body: JSON.stringify({
-          user_id: userId,
           first_name: firstName,
           last_name: lastName,
           phone: phone || null,
@@ -336,6 +497,11 @@ function App() {
       setLoadError('')
       resetEmployeeForm()
     } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
       setLoadError(error.message || 'Mitarbeiter konnte nicht gespeichert werden.')
     } finally {
       setIsSavingEmployee(false)
@@ -359,6 +525,7 @@ function App() {
     try {
       const createdCustomer = await apiRequest('/customers', {
         method: 'POST',
+        accessToken: authToken,
         body: JSON.stringify({
           name: customerName,
           color: customerColor,
@@ -371,6 +538,11 @@ function App() {
       setLoadError('')
       resetCustomerForm()
     } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
       setLoadError(error.message || 'Kunde konnte nicht gespeichert werden.')
     } finally {
       setIsSavingCustomer(false)
@@ -381,7 +553,6 @@ function App() {
     event.preventDefault()
 
     const customerId = Number(scheduleForm.customerId)
-    const createdByUserId = Number(scheduleForm.createdByUserId)
     const notes = scheduleForm.notes.trim()
 
     if (isSavingSchedule) {
@@ -393,13 +564,13 @@ function App() {
       return
     }
 
-    if (!Number.isInteger(customerId) || customerId <= 0) {
-      setLoadError('Bitte einen gueltigen Kunden fuer den Einsatz waehlen.')
+    if (!currentUser) {
+      setLoadError('Bitte zuerst anmelden.')
       return
     }
 
-    if (!Number.isInteger(createdByUserId) || createdByUserId <= 0) {
-      setLoadError('Bitte eine gueltige User-ID fuer den Ersteller angeben.')
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      setLoadError('Bitte einen gueltigen Kunden fuer den Einsatz waehlen.')
       return
     }
 
@@ -413,6 +584,7 @@ function App() {
     try {
       const createdScheduleEntry = await apiRequest('/schedule_entries', {
         method: 'POST',
+        accessToken: authToken,
         body: JSON.stringify({
           employee_id: selectedEmployeeId,
           customer_id: customerId,
@@ -422,7 +594,6 @@ function App() {
           start_time: scheduleForm.startTime,
           end_time: scheduleForm.endTime,
           notes: notes || null,
-          created_by_user_id: createdByUserId,
         }),
       })
 
@@ -432,6 +603,11 @@ function App() {
       setLoadError('')
       resetScheduleForm()
     } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
       setLoadError(error.message || 'Einsatz konnte nicht gespeichert werden.')
     } finally {
       setIsSavingSchedule(false)
@@ -448,12 +624,87 @@ function App() {
         (selectedEmployeeId === null || entry.employee_id === selectedEmployeeId),
     )
 
+  if (!isAuthenticated) {
+    return (
+      <main className="app auth-app">
+        <header className="page-header">
+          <div>
+            <p className="eyebrow">Putzfirma</p>
+            <h1>Dienstplan Software</h1>
+          </div>
+        </header>
+        {authError ? <p className="status-message status-error">{authError}</p> : null}
+        <section className="panel auth-panel">
+          <div className="auth-panel-header">
+            <h2>Login</h2>
+            <p className="panel-note">
+              Melde dich mit deinem Benutzerkonto an. Geschuetzte Backend-Routen werden danach
+              automatisch mit Bearer-Token aufgerufen.
+            </p>
+          </div>
+          <form className="auth-form" onSubmit={handleLoginSubmit}>
+            <div className="form-field">
+              <label htmlFor="login-email">E-Mail</label>
+              <input
+                id="login-email"
+                type="email"
+                value={loginForm.email}
+                onChange={(event) =>
+                  setLoginForm((currentForm) => ({
+                    ...currentForm,
+                    email: event.target.value,
+                  }))
+                }
+                placeholder="name@firma.at"
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="login-password">Passwort</label>
+              <input
+                id="login-password"
+                type="password"
+                value={loginForm.password}
+                onChange={(event) =>
+                  setLoginForm((currentForm) => ({
+                    ...currentForm,
+                    password: event.target.value,
+                  }))
+                }
+                placeholder="Passwort"
+                required
+              />
+            </div>
+            <div className="form-actions auth-actions">
+              <button type="submit" className="action-button form-button" disabled={isLoggingIn}>
+                {isLoggingIn ? 'Prueft...' : 'Anmelden'}
+              </button>
+            </div>
+          </form>
+          <p className="panel-note auth-note">
+            Registrierung mit Invite-Code laeuft aktuell ueber `POST /auth/register`.
+          </p>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="app">
-      <header className="page-header">
+      <header className="page-header page-header-row">
         <div>
           <p className="eyebrow">Putzfirma</p>
           <h1>Dienstplan Software</h1>
+        </div>
+        <div className="header-actions">
+          <div className="session-pill">
+            <span className="session-label">Angemeldet</span>
+            <strong>{currentUser.email}</strong>
+            <span className="session-meta">Rolle: {currentUser.role}</span>
+          </div>
+          <button type="button" className="secondary-button header-button" onClick={handleLogout}>
+            Logout
+          </button>
         </div>
       </header>
       {isLoading ? <p className="status-message">Daten werden geladen...</p> : null}
@@ -463,7 +714,7 @@ function App() {
         <div className="section-header">
           <div>
             <h2>Mitarbeiter</h2>
-            <p className="panel-note">Neue Mitarbeiter brauchen eine bestehende User-ID.</p>
+            <p className="panel-note">Mitarbeiter werden automatisch deinem eingeloggten Account zugeordnet.</p>
           </div>
           <button
             type="button"
@@ -497,23 +748,6 @@ function App() {
         {isEmployeeFormOpen ? (
           <form className="form-card" onSubmit={handleEmployeeSubmit}>
             <div className="form-grid">
-              <div className="form-field">
-                <label htmlFor="employee-user-id">User-ID</label>
-                <input
-                  id="employee-user-id"
-                  type="number"
-                  min="1"
-                  value={employeeForm.userId}
-                  onChange={(event) =>
-                    setEmployeeForm((currentForm) => ({
-                      ...currentForm,
-                      userId: event.target.value,
-                    }))
-                  }
-                  placeholder="1"
-                  required
-                />
-              </div>
               <div className="form-field">
                 <label htmlFor="employee-phone">Telefon</label>
                 <input
@@ -576,7 +810,7 @@ function App() {
               />
             </div>
             <p className="form-hint">
-              Die angegebene User-ID muss bereits in der Datenbank existieren.
+              Der Mitarbeiter gehoert automatisch zu deinem Account.
             </p>
             <div className="form-actions">
               <button
@@ -843,23 +1077,6 @@ function App() {
                     </select>
                   </div>
                   <div className="form-field">
-                    <label htmlFor="schedule-created-by-user-id">Erstellt von User-ID</label>
-                    <input
-                      id="schedule-created-by-user-id"
-                      type="number"
-                      min="1"
-                      value={scheduleForm.createdByUserId}
-                      onChange={(event) =>
-                        setScheduleForm((currentForm) => ({
-                          ...currentForm,
-                          createdByUserId: event.target.value,
-                        }))
-                      }
-                      placeholder="1"
-                      required
-                    />
-                  </div>
-                  <div className="form-field">
                     <label htmlFor="schedule-day">Wochentag</label>
                     <select
                       id="schedule-day"
@@ -932,7 +1149,8 @@ function App() {
                   />
                 </div>
                 <p className="form-hint">
-                  Jahr und Kalenderwoche kommen aus den oberen Steuerfeldern.
+                  Jahr und Kalenderwoche kommen aus den oberen Steuerfeldern. Erstellt wird der
+                  Eintrag als {currentUser.email}.
                 </p>
                 <div className="form-actions">
                   <button

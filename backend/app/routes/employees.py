@@ -7,12 +7,15 @@ from app.database import get_db
 from app.models.employee import Employee
 from app.models.user import User
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
+from app.security import get_current_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-def get_employee_or_404(employee_id: int, db: Session) -> Employee:
-    employee = db.get(Employee, employee_id)
+def get_employee_or_404(employee_id: int, owner_user_id: int, db: Session) -> Employee:
+    employee = db.scalar(
+        select(Employee).where(Employee.id == employee_id, Employee.user_id == owner_user_id)
+    )
     if employee is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -38,22 +41,12 @@ def normalize_employee_payload(data: dict, *, partial: bool) -> dict:
         normalized["last_name"] = last_name
 
     if not partial:
-        if normalized.get("user_id") is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="user_id is required",
-            )
         if not normalized.get("first_name"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="first_name is required",
             )
         normalized.setdefault("last_name", "")
-    elif "user_id" in normalized and normalized["user_id"] is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="user_id must not be null",
-        )
 
     if "first_name" in normalized and not normalized["first_name"]:
         raise HTTPException(
@@ -67,30 +60,35 @@ def normalize_employee_payload(data: dict, *, partial: bool) -> dict:
     return normalized
 
 
-def ensure_user_exists(user_id: int, db: Session) -> None:
-    if db.get(User, user_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Referenced user does not exist",
-        )
-
-
 @router.get("/employees", response_model=list[EmployeeRead])
-def list_employees(db: Session = Depends(get_db)):
+def list_employees(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     return db.scalars(
-        select(Employee).order_by(Employee.first_name.asc(), Employee.last_name.asc())
+        select(Employee)
+        .where(Employee.user_id == current_user.id)
+        .order_by(Employee.first_name.asc(), Employee.last_name.asc())
     ).all()
 
 
 @router.get("/employees/{employee_id}", response_model=EmployeeRead)
-def get_employee(employee_id: int, db: Session = Depends(get_db)):
-    return get_employee_or_404(employee_id, db)
+def get_employee(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_employee_or_404(employee_id, current_user.id, db)
 
 
 @router.post("/employees", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)
-def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)):
+def create_employee(
+    payload: EmployeeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     employee_data = normalize_employee_payload(payload.model_dump(exclude_unset=True), partial=False)
-    ensure_user_exists(employee_data["user_id"], db)
+    employee_data["user_id"] = current_user.id
 
     employee = Employee(**employee_data)
     db.add(employee)
@@ -100,8 +98,8 @@ def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User is already linked to another employee",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Employee could not be created",
         ) from None
 
     db.refresh(employee)
@@ -113,12 +111,10 @@ def update_employee(
     employee_id: int,
     payload: EmployeeUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    employee = get_employee_or_404(employee_id, db)
+    employee = get_employee_or_404(employee_id, current_user.id, db)
     updates = normalize_employee_payload(payload.model_dump(exclude_unset=True), partial=True)
-
-    if "user_id" in updates:
-        ensure_user_exists(updates["user_id"], db)
 
     for field, value in updates.items():
         setattr(employee, field, value)
@@ -128,8 +124,8 @@ def update_employee(
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User is already linked to another employee",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Employee could not be updated",
         ) from None
 
     db.refresh(employee)
@@ -137,8 +133,12 @@ def update_employee(
 
 
 @router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_employee(employee_id: int, db: Session = Depends(get_db)):
-    employee = get_employee_or_404(employee_id, db)
+def delete_employee(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    employee = get_employee_or_404(employee_id, current_user.id, db)
     db.delete(employee)
 
     try:

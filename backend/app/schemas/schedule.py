@@ -18,7 +18,6 @@ class ScheduleEntryBase(BaseModel):
     start_time: time
     end_time: time
     notes: str | None = None
-    created_by_user_id: int
 
     @field_validator("day_of_week", "notes", mode="before")
     @classmethod
@@ -39,7 +38,6 @@ class ScheduleEntryUpdate(BaseModel):
     start_time: time | None = None
     end_time: time | None = None
     notes: str | None = None
-    created_by_user_id: int | None = None
 
     @field_validator("day_of_week", "notes", mode="before")
     @classmethod
@@ -49,6 +47,7 @@ class ScheduleEntryUpdate(BaseModel):
 
 class ScheduleEntryRead(ScheduleEntryBase):
     id: int
+    created_by_user_id: int
     created_at: datetime
     updated_at: datetime
 

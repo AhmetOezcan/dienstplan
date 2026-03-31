@@ -10,7 +10,6 @@ def _strip_string(value: str | None) -> str | None:
 
 
 class EmployeeCreate(BaseModel):
-    user_id: int | None = None
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     name: str | None = None
@@ -25,7 +24,6 @@ class EmployeeCreate(BaseModel):
 
 
 class EmployeeUpdate(BaseModel):
-    user_id: int | None = None
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     name: str | None = None
@@ -41,7 +39,6 @@ class EmployeeUpdate(BaseModel):
 
 class EmployeeRead(BaseModel):
     id: int
-    user_id: int
     first_name: str
     last_name: str
     phone: str | None
