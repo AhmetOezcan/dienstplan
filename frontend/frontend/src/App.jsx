@@ -24,7 +24,39 @@ const timeSlots = [
   '17:00',
 ]
 
+const timeOptions = [...timeSlots, '18:00']
+const dayOrder = Object.fromEntries(weekdays.map((day, index) => [day, index]))
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+
+function createInitialEmployeeForm() {
+  return {
+    userId: '',
+    firstName: '',
+    lastName: '',
+    phone: '',
+    notes: '',
+  }
+}
+
+function createInitialCustomerForm() {
+  return {
+    name: '',
+    color: '#2563eb',
+    address: '',
+    notes: '',
+  }
+}
+
+function createInitialScheduleForm(customerId = '') {
+  return {
+    customerId,
+    dayOfWeek: weekdays[0],
+    startTime: timeSlots[0],
+    endTime: timeOptions[1],
+    createdByUserId: '',
+    notes: '',
+  }
+}
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -35,11 +67,86 @@ async function apiRequest(path, options = {}) {
     },
   })
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`)
+  if (response.status === 204) {
+    return null
   }
 
-  return response.json()
+  const contentType = response.headers.get('content-type') ?? ''
+  const payload = contentType.includes('application/json')
+    ? await response.json()
+    : await response.text()
+
+  if (!response.ok) {
+    const message =
+      typeof payload === 'object' && payload !== null && 'detail' in payload
+        ? payload.detail
+        : `API request failed with status ${response.status}`
+
+    throw new Error(message)
+  }
+
+  return payload
+}
+
+function getEmployeeDisplayName(employee) {
+  if (!employee) {
+    return ''
+  }
+
+  if (employee.name) {
+    return employee.name
+  }
+
+  return [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim()
+}
+
+function getScheduleEntryDay(entry) {
+  return entry.day_of_week ?? entry.day ?? ''
+}
+
+function getScheduleEntryStartTime(entry) {
+  if (entry.time) {
+    return entry.time
+  }
+
+  return entry.start_time?.slice(0, 5) ?? ''
+}
+
+function getScheduleEntryEndTime(entry) {
+  return entry.end_time?.slice(0, 5) ?? ''
+}
+
+function sortEmployees(items) {
+  return [...items].sort((left, right) =>
+    getEmployeeDisplayName(left).localeCompare(getEmployeeDisplayName(right), 'de'),
+  )
+}
+
+function sortCustomers(items) {
+  return [...items].sort((left, right) => left.name.localeCompare(right.name, 'de'))
+}
+
+function sortScheduleEntries(items) {
+  return [...items].sort((left, right) => {
+    const yearDiff = left.year - right.year
+    if (yearDiff !== 0) {
+      return yearDiff
+    }
+
+    const weekDiff = left.calendar_week - right.calendar_week
+    if (weekDiff !== 0) {
+      return weekDiff
+    }
+
+    const dayDiff =
+      (dayOrder[getScheduleEntryDay(left)] ?? Number.MAX_SAFE_INTEGER) -
+      (dayOrder[getScheduleEntryDay(right)] ?? Number.MAX_SAFE_INTEGER)
+    if (dayDiff !== 0) {
+      return dayDiff
+    }
+
+    return getScheduleEntryStartTime(left).localeCompare(getScheduleEntryStartTime(right), 'de')
+  })
 }
 
 function App() {
@@ -48,16 +155,17 @@ function App() {
   const [scheduleEntries, setScheduleEntries] = useState([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
   const [isEmployeeFormOpen, setIsEmployeeFormOpen] = useState(false)
-  const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false)
-  const [newEmployeeName, setNewEmployeeName] = useState('')
-  const [newCustomerName, setNewCustomerName] = useState('')
-  const [newCustomerColor, setNewCustomerColor] = useState('#2563eb')
+  const [isScheduleFormOpen, setIsScheduleFormOpen] = useState(false)
+  const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
+  const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
+  const [scheduleForm, setScheduleForm] = useState(createInitialScheduleForm)
   const [year, setYear] = useState(2026)
   const [calendarWeek, setCalendarWeek] = useState(14)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false)
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -70,28 +178,48 @@ function App() {
         const [loadedEmployees, loadedCustomers, loadedScheduleEntries] = await Promise.all([
           apiRequest('/employees', { signal: abortController.signal }),
           apiRequest('/customers', { signal: abortController.signal }),
-          apiRequest('/schedule', { signal: abortController.signal }),
+          apiRequest('/schedule_entries', { signal: abortController.signal }),
         ])
 
-        setEmployees(loadedEmployees)
-        setCustomers(loadedCustomers)
-        setScheduleEntries(loadedScheduleEntries)
+        const sortedEmployees = sortEmployees(loadedEmployees)
+        const sortedCustomers = sortCustomers(loadedCustomers)
+
+        setEmployees(sortedEmployees)
+        setCustomers(sortedCustomers)
+        setScheduleEntries(sortScheduleEntries(loadedScheduleEntries))
         setSelectedEmployeeId((currentEmployeeId) => {
           if (
             currentEmployeeId !== null &&
-            loadedEmployees.some((employee) => employee.id === currentEmployeeId)
+            sortedEmployees.some((employee) => employee.id === currentEmployeeId)
           ) {
             return currentEmployeeId
           }
 
-          return loadedEmployees[0]?.id ?? null
+          return sortedEmployees[0]?.id ?? null
+        })
+        setScheduleForm((currentForm) => {
+          const currentCustomerExists = sortedCustomers.some(
+            (customer) => String(customer.id) === currentForm.customerId,
+          )
+          const nextCustomerId = currentCustomerExists
+            ? currentForm.customerId
+            : (sortedCustomers[0]?.id?.toString() ?? '')
+
+          if (nextCustomerId === currentForm.customerId) {
+            return currentForm
+          }
+
+          return {
+            ...currentForm,
+            customerId: nextCustomerId,
+          }
         })
       } catch (error) {
         if (error.name === 'AbortError') {
           return
         }
 
-        setLoadError('Daten konnten nicht vom Backend geladen werden.')
+        setLoadError(error.message || 'Daten konnten nicht vom Backend geladen werden.')
       } finally {
         if (!abortController.signal.aborted) {
           setIsLoading(false)
@@ -106,29 +234,86 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    setScheduleForm((currentForm) => {
+      const currentCustomerExists = customers.some(
+        (customer) => String(customer.id) === currentForm.customerId,
+      )
+      const nextCustomerId = currentCustomerExists
+        ? currentForm.customerId
+        : (customers[0]?.id?.toString() ?? '')
+
+      if (nextCustomerId === currentForm.customerId) {
+        return currentForm
+      }
+
+      return {
+        ...currentForm,
+        customerId: nextCustomerId,
+      }
+    })
+  }, [customers])
+
+  useEffect(() => {
+    setScheduleForm((currentForm) => {
+      const availableEndTimes = timeOptions.filter((value) => value > currentForm.startTime)
+      const nextEndTime = availableEndTimes.includes(currentForm.endTime)
+        ? currentForm.endTime
+        : (availableEndTimes[0] ?? currentForm.endTime)
+
+      if (nextEndTime === currentForm.endTime) {
+        return currentForm
+      }
+
+      return {
+        ...currentForm,
+        endTime: nextEndTime,
+      }
+    })
+  }, [scheduleForm.startTime])
+
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
-  const customersById = Object.fromEntries(
-    customers.map((customer) => [customer.id, customer]),
-  )
+  const selectedEmployeeLabel = selectedEmployee
+    ? getEmployeeDisplayName(selectedEmployee)
+    : 'Kein Mitarbeiter ausgewaehlt'
+  const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
+  const endTimeOptions = timeOptions.filter((value) => value > scheduleForm.startTime)
 
   const resetEmployeeForm = () => {
-    setNewEmployeeName('')
+    setEmployeeForm(createInitialEmployeeForm())
     setIsEmployeeFormOpen(false)
   }
 
   const resetCustomerForm = () => {
-    setNewCustomerName('')
-    setNewCustomerColor('#2563eb')
-    setIsCustomerFormOpen(false)
+    setCustomerForm(createInitialCustomerForm())
+  }
+
+  const resetScheduleForm = () => {
+    setScheduleForm(createInitialScheduleForm(customers[0]?.id?.toString() ?? ''))
+    setIsScheduleFormOpen(false)
   }
 
   const handleEmployeeSubmit = async (event) => {
     event.preventDefault()
 
-    const employeeName = newEmployeeName.trim()
+    const userId = Number(employeeForm.userId)
+    const firstName = employeeForm.firstName.trim()
+    const lastName = employeeForm.lastName.trim()
+    const phone = employeeForm.phone.trim()
+    const notes = employeeForm.notes.trim()
 
-    if (!employeeName || isSavingEmployee) {
+    if (isSavingEmployee) {
+      return
+    }
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      setLoadError('Bitte eine gueltige User-ID fuer den Mitarbeiter angeben.')
+      return
+    }
+
+    if (!firstName) {
+      setLoadError('Vorname fuer den Mitarbeiter fehlt.')
       return
     }
 
@@ -137,15 +322,21 @@ function App() {
     try {
       const createdEmployee = await apiRequest('/employees', {
         method: 'POST',
-        body: JSON.stringify({ name: employeeName }),
+        body: JSON.stringify({
+          user_id: userId,
+          first_name: firstName,
+          last_name: lastName,
+          phone: phone || null,
+          notes: notes || null,
+        }),
       })
 
-      setEmployees((currentEmployees) => [...currentEmployees, createdEmployee])
+      setEmployees((currentEmployees) => sortEmployees([...currentEmployees, createdEmployee]))
       setSelectedEmployeeId(createdEmployee.id)
       setLoadError('')
       resetEmployeeForm()
     } catch (error) {
-      setLoadError('Mitarbeiter konnte nicht gespeichert werden.')
+      setLoadError(error.message || 'Mitarbeiter konnte nicht gespeichert werden.')
     } finally {
       setIsSavingEmployee(false)
     }
@@ -154,8 +345,10 @@ function App() {
   const handleCustomerSubmit = async (event) => {
     event.preventDefault()
 
-    const customerName = newCustomerName.trim()
-    const customerColor = newCustomerColor.trim() || '#2563eb'
+    const customerName = customerForm.name.trim()
+    const customerColor = customerForm.color.trim() || '#2563eb'
+    const address = customerForm.address.trim()
+    const notes = customerForm.notes.trim()
 
     if (!customerName || isSavingCustomer) {
       return
@@ -166,16 +359,82 @@ function App() {
     try {
       const createdCustomer = await apiRequest('/customers', {
         method: 'POST',
-        body: JSON.stringify({ name: customerName, color: customerColor }),
+        body: JSON.stringify({
+          name: customerName,
+          color: customerColor,
+          address: address || null,
+          notes: notes || null,
+        }),
       })
 
-      setCustomers((currentCustomers) => [...currentCustomers, createdCustomer])
+      setCustomers((currentCustomers) => sortCustomers([...currentCustomers, createdCustomer]))
       setLoadError('')
       resetCustomerForm()
     } catch (error) {
-      setLoadError('Kunde konnte nicht gespeichert werden.')
+      setLoadError(error.message || 'Kunde konnte nicht gespeichert werden.')
     } finally {
       setIsSavingCustomer(false)
+    }
+  }
+
+  const handleScheduleSubmit = async (event) => {
+    event.preventDefault()
+
+    const customerId = Number(scheduleForm.customerId)
+    const createdByUserId = Number(scheduleForm.createdByUserId)
+    const notes = scheduleForm.notes.trim()
+
+    if (isSavingSchedule) {
+      return
+    }
+
+    if (selectedEmployeeId === null) {
+      setLoadError('Bitte zuerst einen Mitarbeiter auswaehlen.')
+      return
+    }
+
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      setLoadError('Bitte einen gueltigen Kunden fuer den Einsatz waehlen.')
+      return
+    }
+
+    if (!Number.isInteger(createdByUserId) || createdByUserId <= 0) {
+      setLoadError('Bitte eine gueltige User-ID fuer den Ersteller angeben.')
+      return
+    }
+
+    if (scheduleForm.startTime >= scheduleForm.endTime) {
+      setLoadError('Die Endzeit muss spaeter als die Startzeit sein.')
+      return
+    }
+
+    setIsSavingSchedule(true)
+
+    try {
+      const createdScheduleEntry = await apiRequest('/schedule_entries', {
+        method: 'POST',
+        body: JSON.stringify({
+          employee_id: selectedEmployeeId,
+          customer_id: customerId,
+          year,
+          calendar_week: calendarWeek,
+          day_of_week: scheduleForm.dayOfWeek,
+          start_time: scheduleForm.startTime,
+          end_time: scheduleForm.endTime,
+          notes: notes || null,
+          created_by_user_id: createdByUserId,
+        }),
+      })
+
+      setScheduleEntries((currentEntries) =>
+        sortScheduleEntries([...currentEntries, createdScheduleEntry]),
+      )
+      setLoadError('')
+      resetScheduleForm()
+    } catch (error) {
+      setLoadError(error.message || 'Einsatz konnte nicht gespeichert werden.')
+    } finally {
+      setIsSavingSchedule(false)
     }
   }
 
@@ -184,8 +443,8 @@ function App() {
       (entry) =>
         entry.year === year &&
         entry.calendar_week === calendarWeek &&
-        entry.day === day &&
-        entry.time === time &&
+        getScheduleEntryDay(entry) === day &&
+        getScheduleEntryStartTime(entry) === time &&
         (selectedEmployeeId === null || entry.employee_id === selectedEmployeeId),
     )
 
@@ -202,7 +461,10 @@ function App() {
 
       <section className="panel employee-panel" aria-label="Mitarbeiter">
         <div className="section-header">
-          <h2>Mitarbeiter</h2>
+          <div>
+            <h2>Mitarbeiter</h2>
+            <p className="panel-note">Neue Mitarbeiter brauchen eine bestehende User-ID.</p>
+          </div>
           <button
             type="button"
             className="icon-button"
@@ -225,7 +487,7 @@ function App() {
                 aria-pressed={selectedEmployeeId === employee.id}
                 onClick={() => setSelectedEmployeeId(employee.id)}
               >
-                {employee.name}
+                {getEmployeeDisplayName(employee)}
               </button>
             ))
           ) : (
@@ -234,17 +496,88 @@ function App() {
         </div>
         {isEmployeeFormOpen ? (
           <form className="form-card" onSubmit={handleEmployeeSubmit}>
+            <div className="form-grid">
+              <div className="form-field">
+                <label htmlFor="employee-user-id">User-ID</label>
+                <input
+                  id="employee-user-id"
+                  type="number"
+                  min="1"
+                  value={employeeForm.userId}
+                  onChange={(event) =>
+                    setEmployeeForm((currentForm) => ({
+                      ...currentForm,
+                      userId: event.target.value,
+                    }))
+                  }
+                  placeholder="1"
+                  required
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="employee-phone">Telefon</label>
+                <input
+                  id="employee-phone"
+                  type="text"
+                  value={employeeForm.phone}
+                  onChange={(event) =>
+                    setEmployeeForm((currentForm) => ({
+                      ...currentForm,
+                      phone: event.target.value,
+                    }))
+                  }
+                  placeholder="+43 ..."
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="employee-first-name">Vorname</label>
+                <input
+                  id="employee-first-name"
+                  type="text"
+                  value={employeeForm.firstName}
+                  onChange={(event) =>
+                    setEmployeeForm((currentForm) => ({
+                      ...currentForm,
+                      firstName: event.target.value,
+                    }))
+                  }
+                  placeholder="Ahmet"
+                  required
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="employee-last-name">Nachname</label>
+                <input
+                  id="employee-last-name"
+                  type="text"
+                  value={employeeForm.lastName}
+                  onChange={(event) =>
+                    setEmployeeForm((currentForm) => ({
+                      ...currentForm,
+                      lastName: event.target.value,
+                    }))
+                  }
+                  placeholder="Oezcan"
+                />
+              </div>
+            </div>
             <div className="form-field">
-              <label htmlFor="employee-name">Mitarbeitername</label>
-              <input
-                id="employee-name"
-                type="text"
-                value={newEmployeeName}
-                onChange={(event) => setNewEmployeeName(event.target.value)}
-                placeholder="Neuer Mitarbeiter"
-                required
+              <label htmlFor="employee-notes">Notizen</label>
+              <textarea
+                id="employee-notes"
+                value={employeeForm.notes}
+                onChange={(event) =>
+                  setEmployeeForm((currentForm) => ({
+                    ...currentForm,
+                    notes: event.target.value,
+                  }))
+                }
+                placeholder="Interne Hinweise"
               />
             </div>
+            <p className="form-hint">
+              Die angegebene User-ID muss bereits in der Datenbank existieren.
+            </p>
             <div className="form-actions">
               <button
                 type="submit"
@@ -292,8 +625,7 @@ function App() {
           <div className="schedule-header">
             <h2>Dienstplan</h2>
             <p className="selected-employee">
-              Ausgewaehlter Mitarbeiter:{' '}
-              <span>{selectedEmployee?.name ?? 'Kein Mitarbeiter ausgewaehlt'}</span>
+              Ausgewaehlter Mitarbeiter: <span>{selectedEmployeeLabel}</span>
             </p>
           </div>
           <div className="table-wrapper">
@@ -320,11 +652,15 @@ function App() {
                           <div className="schedule-cell-content">
                             {cellEntries.map((entry) => {
                               const customer = customersById[entry.customer_id]
+                              const endTime = getScheduleEntryEndTime(entry)
 
                               return (
                                 <span
                                   key={entry.id}
                                   className="schedule-entry"
+                                  title={`${customer?.name ?? `Kunde #${entry.customer_id}`}${
+                                    endTime ? ` bis ${endTime}` : ''
+                                  }`}
                                   style={{
                                     backgroundColor: customer?.color ?? '#475569',
                                   }}
@@ -355,7 +691,12 @@ function App() {
                     className="customer-card"
                     style={{ backgroundColor: customer.color }}
                   >
-                    {customer.name}
+                    <div className="customer-card-content">
+                      <span>{customer.name}</span>
+                      {customer.address ? (
+                        <span className="customer-card-meta">{customer.address}</span>
+                      ) : null}
+                    </div>
                   </article>
                 ))
               ) : (
@@ -365,53 +706,247 @@ function App() {
           </section>
 
           <section className="panel sidebar-panel">
-            <div className="action-list">
-              <button
-                type="button"
-                className="action-button"
-                disabled={isLoading}
-                onClick={() => setIsCustomerFormOpen(true)}
-              >
-                Kunde erstellen
-              </button>
+            <div className="section-header">
+              <h2>Kunde erstellen</h2>
             </div>
-            {isCustomerFormOpen ? (
-              <form className="form-card" onSubmit={handleCustomerSubmit}>
-                <div className="form-field">
-                  <label htmlFor="customer-name">Kundenname</label>
-                  <input
-                    id="customer-name"
-                    type="text"
-                    value={newCustomerName}
-                    onChange={(event) => setNewCustomerName(event.target.value)}
-                    placeholder="Reinigung Maier"
-                    required
-                  />
-                </div>
+            <form className="form-card form-card-compact" onSubmit={handleCustomerSubmit}>
+              <div className="form-field">
+                <label htmlFor="customer-name">Kundenname</label>
+                <input
+                  id="customer-name"
+                  type="text"
+                  value={customerForm.name}
+                  onChange={(event) =>
+                    setCustomerForm((currentForm) => ({
+                      ...currentForm,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Reinigung Maier"
+                  required
+                />
+              </div>
+              <div className="form-grid">
                 <div className="form-field">
                   <label htmlFor="customer-color">Farbe</label>
                   <input
                     id="customer-color"
                     type="text"
-                    value={newCustomerColor}
-                    onChange={(event) => setNewCustomerColor(event.target.value)}
+                    value={customerForm.color}
+                    onChange={(event) =>
+                      setCustomerForm((currentForm) => ({
+                        ...currentForm,
+                        color: event.target.value,
+                      }))
+                    }
                     placeholder="#2563eb"
                     required
                   />
                 </div>
+                <div className="form-field">
+                  <label htmlFor="customer-address">Adresse</label>
+                  <input
+                    id="customer-address"
+                    type="text"
+                    value={customerForm.address}
+                    onChange={(event) =>
+                      setCustomerForm((currentForm) => ({
+                        ...currentForm,
+                        address: event.target.value,
+                      }))
+                    }
+                    placeholder="Wiener Strasse 1"
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="customer-notes">Notizen</label>
+                <textarea
+                  id="customer-notes"
+                  value={customerForm.notes}
+                  onChange={(event) =>
+                    setCustomerForm((currentForm) => ({
+                      ...currentForm,
+                      notes: event.target.value,
+                    }))
+                  }
+                  placeholder="Zugang, Schluessel, Besonderheiten"
+                />
+              </div>
+              <div className="form-actions">
+                <button
+                  type="submit"
+                  className="action-button form-button"
+                  disabled={isSavingCustomer}
+                >
+                  {isSavingCustomer ? 'Speichert...' : 'Speichern'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button form-button"
+                  disabled={isSavingCustomer}
+                  onClick={resetCustomerForm}
+                >
+                  Zuruecksetzen
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel sidebar-panel">
+            <div className="section-header">
+              <div>
+                <h2>Einsatz erstellen</h2>
+                <p className="panel-note">
+                  {selectedEmployee
+                    ? `Fuer ${selectedEmployeeLabel} in KW ${calendarWeek}/${year}.`
+                    : 'Zuerst einen Mitarbeiter auswaehlen.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Einsatz erstellen"
+                disabled={isLoading || selectedEmployeeId === null || customers.length === 0}
+                onClick={() => setIsScheduleFormOpen(true)}
+              >
+                +
+              </button>
+            </div>
+            {selectedEmployeeId === null ? (
+              <p className="empty-state">Kein Mitarbeiter ausgewaehlt.</p>
+            ) : null}
+            {selectedEmployeeId !== null && customers.length === 0 ? (
+              <p className="empty-state">Lege zuerst einen Kunden an.</p>
+            ) : null}
+            {isScheduleFormOpen ? (
+              <form className="form-card" onSubmit={handleScheduleSubmit}>
+                <div className="form-grid">
+                  <div className="form-field">
+                    <label htmlFor="schedule-customer">Kunde</label>
+                    <select
+                      id="schedule-customer"
+                      value={scheduleForm.customerId}
+                      onChange={(event) =>
+                        setScheduleForm((currentForm) => ({
+                          ...currentForm,
+                          customerId: event.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="schedule-created-by-user-id">Erstellt von User-ID</label>
+                    <input
+                      id="schedule-created-by-user-id"
+                      type="number"
+                      min="1"
+                      value={scheduleForm.createdByUserId}
+                      onChange={(event) =>
+                        setScheduleForm((currentForm) => ({
+                          ...currentForm,
+                          createdByUserId: event.target.value,
+                        }))
+                      }
+                      placeholder="1"
+                      required
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="schedule-day">Wochentag</label>
+                    <select
+                      id="schedule-day"
+                      value={scheduleForm.dayOfWeek}
+                      onChange={(event) =>
+                        setScheduleForm((currentForm) => ({
+                          ...currentForm,
+                          dayOfWeek: event.target.value,
+                        }))
+                      }
+                    >
+                      {weekdays.map((day) => (
+                        <option key={day} value={day}>
+                          {day}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="schedule-start-time">Startzeit</label>
+                    <select
+                      id="schedule-start-time"
+                      value={scheduleForm.startTime}
+                      onChange={(event) =>
+                        setScheduleForm((currentForm) => ({
+                          ...currentForm,
+                          startTime: event.target.value,
+                        }))
+                      }
+                    >
+                      {timeSlots.map((time) => (
+                        <option key={time} value={time}>
+                          {time}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="schedule-end-time">Endzeit</label>
+                    <select
+                      id="schedule-end-time"
+                      value={scheduleForm.endTime}
+                      onChange={(event) =>
+                        setScheduleForm((currentForm) => ({
+                          ...currentForm,
+                          endTime: event.target.value,
+                        }))
+                      }
+                    >
+                      {endTimeOptions.map((time) => (
+                        <option key={time} value={time}>
+                          {time}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="form-field">
+                  <label htmlFor="schedule-notes">Notizen</label>
+                  <textarea
+                    id="schedule-notes"
+                    value={scheduleForm.notes}
+                    onChange={(event) =>
+                      setScheduleForm((currentForm) => ({
+                        ...currentForm,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Hinweise zum Einsatz"
+                  />
+                </div>
+                <p className="form-hint">
+                  Jahr und Kalenderwoche kommen aus den oberen Steuerfeldern.
+                </p>
                 <div className="form-actions">
                   <button
                     type="submit"
                     className="action-button form-button"
-                    disabled={isSavingCustomer}
+                    disabled={isSavingSchedule}
                   >
-                    {isSavingCustomer ? 'Speichert...' : 'Speichern'}
+                    {isSavingSchedule ? 'Speichert...' : 'Einsatz speichern'}
                   </button>
                   <button
                     type="button"
                     className="secondary-button form-button"
-                    disabled={isSavingCustomer}
-                    onClick={resetCustomerForm}
+                    disabled={isSavingSchedule}
+                    onClick={resetScheduleForm}
                   >
                     Abbrechen
                   </button>

@@ -419,3 +419,8 @@ FodyWeavers.xsd
 
 __pycache__/
 *.pyc
+.env
+.postgres-data/
+venv/
+node_modules/
+dist/
