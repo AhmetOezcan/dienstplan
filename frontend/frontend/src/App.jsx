@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 const weekdays = [
@@ -26,13 +26,69 @@ const timeSlots = [
 
 const timeOptions = [...timeSlots, '18:00']
 const dayOrder = Object.fromEntries(weekdays.map((day, index) => [day, index]))
+const timeIndexByValue = Object.fromEntries(timeOptions.map((time, index) => [time, index]))
+const CUSTOMER_COLOR_OPTIONS = [
+  '#ef4444',
+  '#f97316',
+  '#f59e0b',
+  '#eab308',
+  '#84cc16',
+  '#22c55e',
+  '#10b981',
+  '#14b8a6',
+  '#06b6d4',
+  '#0ea5e9',
+  '#3b82f6',
+  '#6366f1',
+  '#8b5cf6',
+  '#a855f7',
+  '#d946ef',
+  '#ec4899',
+  '#f43f5e',
+  '#b91c1c',
+  '#c2410c',
+  '#b45309',
+  '#a16207',
+  '#4d7c0f',
+  '#15803d',
+  '#047857',
+  '#0f766e',
+  '#0e7490',
+  '#0369a1',
+  '#2563eb',
+  '#4338ca',
+  '#6d28d9',
+  '#7e22ce',
+  '#a21caf',
+  '#be185d',
+  '#be123c',
+  '#7f1d1d',
+  '#9a3412',
+  '#92400e',
+  '#713f12',
+  '#365314',
+  '#166534',
+  '#065f46',
+  '#115e59',
+  '#155e75',
+  '#1e40af',
+  '#312e81',
+  '#581c87',
+  '#701a75',
+  '#831843',
+  '#334155',
+  '#64748b',
+]
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'dienstplan_auth_session'
+const SCHEDULE_ROW_HEIGHT = 72
 
 function createEmptyAuthSession() {
   return {
     accessToken: '',
     user: null,
+    account: null,
+    membershipRole: '',
   }
 }
 
@@ -60,6 +116,10 @@ function getStoredAuthSession() {
     return {
       accessToken: parsedValue.accessToken,
       user: parsedValue.user,
+      account:
+        parsedValue?.account && typeof parsedValue.account.id === 'number' ? parsedValue.account : null,
+      membershipRole:
+        typeof parsedValue?.membershipRole === 'string' ? parsedValue.membershipRole : '',
     }
   } catch {
     return createEmptyAuthSession()
@@ -101,20 +161,46 @@ function createInitialEmployeeForm() {
 function createInitialCustomerForm() {
   return {
     name: '',
-    color: '#2563eb',
     address: '',
     notes: '',
   }
 }
 
-function createInitialScheduleForm(customerId = '') {
-  return {
-    customerId,
-    dayOfWeek: weekdays[0],
-    startTime: timeSlots[0],
-    endTime: timeOptions[1],
-    notes: '',
+function getRandomCustomerColor(customers) {
+  const unusedColors = CUSTOMER_COLOR_OPTIONS.filter(
+    (color) => !customers.some((customer) => customer.color === color),
+  )
+  const availableColors = unusedColors.length > 0 ? unusedColors : CUSTOMER_COLOR_OPTIONS
+  const randomIndex = Math.floor(Math.random() * availableColors.length)
+  return availableColors[randomIndex]
+}
+
+function formatShortDate(date) {
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const month = date.toLocaleString('de-AT', {
+    month: 'long',
+    timeZone: 'UTC',
+  })
+  return `${day}. ${month}`
+}
+
+function getCalendarWeekDateRangeLabel(year, calendarWeek) {
+  if (!Number.isInteger(year) || !Number.isInteger(calendarWeek) || calendarWeek < 1 || calendarWeek > 53) {
+    return ''
   }
+
+  const januaryFourth = new Date(Date.UTC(year, 0, 4))
+  const januaryFourthDay = januaryFourth.getUTCDay() || 7
+  const mondayOfFirstWeek = new Date(januaryFourth)
+  mondayOfFirstWeek.setUTCDate(januaryFourth.getUTCDate() - januaryFourthDay + 1)
+
+  const weekStart = new Date(mondayOfFirstWeek)
+  weekStart.setUTCDate(mondayOfFirstWeek.getUTCDate() + (calendarWeek - 1) * 7)
+
+  const weekEnd = new Date(weekStart)
+  weekEnd.setUTCDate(weekStart.getUTCDate() + 6)
+
+  return `${formatShortDate(weekStart)} - ${formatShortDate(weekEnd)}`
 }
 
 async function apiRequest(path, options = {}) {
@@ -217,6 +303,14 @@ function sortScheduleEntries(items) {
   })
 }
 
+function getCellKey(day, time) {
+  return `${day}__${time}`
+}
+
+function getTimeIndex(time) {
+  return timeIndexByValue[time] ?? -1
+}
+
 function App() {
   const initialAuthSession = getStoredAuthSession()
   const [authSession, setAuthSession] = useState(initialAuthSession)
@@ -226,10 +320,8 @@ function App() {
   const [scheduleEntries, setScheduleEntries] = useState([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
   const [isEmployeeFormOpen, setIsEmployeeFormOpen] = useState(false)
-  const [isScheduleFormOpen, setIsScheduleFormOpen] = useState(false)
   const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
-  const [scheduleForm, setScheduleForm] = useState(createInitialScheduleForm)
   const [year, setYear] = useState(2026)
   const [calendarWeek, setCalendarWeek] = useState(14)
   const [isLoading, setIsLoading] = useState(Boolean(initialAuthSession.accessToken))
@@ -239,10 +331,27 @@ function App() {
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
+  const [draggedCustomerId, setDraggedCustomerId] = useState(null)
+  const [activeDropCellKey, setActiveDropCellKey] = useState('')
+  const [resizeState, setResizeState] = useState(null)
+  const resizeStateRef = useRef(null)
+  const scheduleEntriesForCurrentViewRef = useRef([])
 
   const authToken = authSession.accessToken
   const currentUser = authSession.user
+  const currentAccount = authSession.account
+  const currentMembershipRole = authSession.membershipRole || currentUser?.role || ''
   const isAuthenticated = Boolean(authToken && currentUser)
+
+  useEffect(() => {
+    resizeStateRef.current = resizeState
+  }, [resizeState])
+
+  useEffect(() => {
+    setDraggedCustomerId(null)
+    setActiveDropCellKey('')
+    setResizeState(null)
+  }, [selectedEmployeeId, year, calendarWeek])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -251,7 +360,6 @@ function App() {
       setScheduleEntries([])
       setSelectedEmployeeId(null)
       setIsEmployeeFormOpen(false)
-      setIsScheduleFormOpen(false)
       setIsLoading(false)
       return
     }
@@ -294,23 +402,6 @@ function App() {
 
           return sortedEmployees[0]?.id ?? null
         })
-        setScheduleForm((currentForm) => {
-          const currentCustomerExists = sortedCustomers.some(
-            (customer) => String(customer.id) === currentForm.customerId,
-          )
-          const nextCustomerId = currentCustomerExists
-            ? currentForm.customerId
-            : (sortedCustomers[0]?.id?.toString() ?? '')
-
-          if (nextCustomerId === currentForm.customerId) {
-            return currentForm
-          }
-
-          return {
-            ...currentForm,
-            customerId: nextCustomerId,
-          }
-        })
       } catch (error) {
         if (error.name === 'AbortError') {
           return
@@ -324,7 +415,6 @@ function App() {
           setScheduleEntries([])
           setSelectedEmployeeId(null)
           setIsEmployeeFormOpen(false)
-          setIsScheduleFormOpen(false)
           setLoadError('')
           setAuthError('Sitzung abgelaufen. Bitte erneut anmelden.')
           return
@@ -345,51 +435,54 @@ function App() {
     }
   }, [authToken, isAuthenticated])
 
-  useEffect(() => {
-    setScheduleForm((currentForm) => {
-      const currentCustomerExists = customers.some(
-        (customer) => String(customer.id) === currentForm.customerId,
-      )
-      const nextCustomerId = currentCustomerExists
-        ? currentForm.customerId
-        : (customers[0]?.id?.toString() ?? '')
-
-      if (nextCustomerId === currentForm.customerId) {
-        return currentForm
-      }
-
-      return {
-        ...currentForm,
-        customerId: nextCustomerId,
-      }
-    })
-  }, [customers])
-
-  useEffect(() => {
-    setScheduleForm((currentForm) => {
-      const availableEndTimes = timeOptions.filter((value) => value > currentForm.startTime)
-      const nextEndTime = availableEndTimes.includes(currentForm.endTime)
-        ? currentForm.endTime
-        : (availableEndTimes[0] ?? currentForm.endTime)
-
-      if (nextEndTime === currentForm.endTime) {
-        return currentForm
-      }
-
-      return {
-        ...currentForm,
-        endTime: nextEndTime,
-      }
-    })
-  }, [scheduleForm.startTime])
-
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
   const selectedEmployeeLabel = selectedEmployee
     ? getEmployeeDisplayName(selectedEmployee)
-    : 'Kein Mitarbeiter ausgewaehlt'
+    : 'Kein Mitarbeiter ausgewählt'
+  const scheduleDateRangeLabel = getCalendarWeekDateRangeLabel(year, calendarWeek)
   const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
-  const endTimeOptions = timeOptions.filter((value) => value > scheduleForm.startTime)
+  const scheduleEntriesForCurrentView =
+    selectedEmployeeId === null
+      ? []
+      : scheduleEntries.filter(
+          (entry) =>
+            entry.year === year &&
+            entry.calendar_week === calendarWeek &&
+            entry.employee_id === selectedEmployeeId,
+        )
+  const scheduledCustomerIds = new Set(
+    scheduleEntriesForCurrentView.map((entry) => entry.customer_id),
+  )
+  const availableCustomers =
+    selectedEmployeeId === null
+      ? customers
+      : customers.filter((customer) => !scheduledCustomerIds.has(customer.id))
+  scheduleEntriesForCurrentViewRef.current = scheduleEntriesForCurrentView
+  const scheduleEntriesByStartCell = new Map()
+  const coveredScheduleCellKeys = new Set()
+
+  for (const entry of scheduleEntriesForCurrentView) {
+    const day = getScheduleEntryDay(entry)
+    const startTime = getScheduleEntryStartTime(entry)
+    const endTime =
+      resizeState?.entryId === entry.id ? resizeState.previewEndTime : getScheduleEntryEndTime(entry)
+    const startIndex = getTimeIndex(startTime)
+    const endIndex = getTimeIndex(endTime)
+
+    if (startIndex < 0 || endIndex <= startIndex) {
+      continue
+    }
+
+    scheduleEntriesByStartCell.set(getCellKey(day, startTime), entry)
+
+    for (let slotIndex = startIndex + 1; slotIndex < endIndex; slotIndex += 1) {
+      const coveredTime = timeOptions[slotIndex]
+      if (timeSlots.includes(coveredTime)) {
+        coveredScheduleCellKeys.add(getCellKey(day, coveredTime))
+      }
+    }
+  }
 
   const resetAuthenticatedApp = (message = '') => {
     clearStoredAuthSession()
@@ -399,7 +492,9 @@ function App() {
     setScheduleEntries([])
     setSelectedEmployeeId(null)
     setIsEmployeeFormOpen(false)
-    setIsScheduleFormOpen(false)
+    setDraggedCustomerId(null)
+    setActiveDropCellKey('')
+    setResizeState(null)
     setLoadError('')
     setAuthError(message)
     setIsLoading(false)
@@ -412,11 +507,6 @@ function App() {
 
   const resetCustomerForm = () => {
     setCustomerForm(createInitialCustomerForm())
-  }
-
-  const resetScheduleForm = () => {
-    setScheduleForm(createInitialScheduleForm(customers[0]?.id?.toString() ?? ''))
-    setIsScheduleFormOpen(false)
   }
 
   const handleLoginSubmit = async (event) => {
@@ -441,6 +531,8 @@ function App() {
       const nextSession = {
         accessToken: loginResponse.access_token,
         user: loginResponse.user,
+        account: loginResponse.account ?? null,
+        membershipRole: loginResponse.membership_role ?? '',
       }
 
       persistAuthSession(nextSession)
@@ -474,7 +566,7 @@ function App() {
     }
 
     if (!firstName) {
-      setLoadError('Vorname fuer den Mitarbeiter fehlt.')
+      setLoadError('Vorname für den Mitarbeiter fehlt.')
       return
     }
 
@@ -512,9 +604,9 @@ function App() {
     event.preventDefault()
 
     const customerName = customerForm.name.trim()
-    const customerColor = customerForm.color.trim() || '#2563eb'
     const address = customerForm.address.trim()
     const notes = customerForm.notes.trim()
+    const customerColor = getRandomCustomerColor(customers)
 
     if (!customerName || isSavingCustomer) {
       return
@@ -549,33 +641,51 @@ function App() {
     }
   }
 
-  const handleScheduleSubmit = async (event) => {
-    event.preventDefault()
+  const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
+    const startIndex = getTimeIndex(startTime)
+    const endIndex = getTimeIndex(endTime)
 
-    const customerId = Number(scheduleForm.customerId)
-    const notes = scheduleForm.notes.trim()
+    if (startIndex < 0 || endIndex <= startIndex) {
+      return true
+    }
 
+    return scheduleEntriesForCurrentView.some((entry) => {
+      if (entry.id === ignoreEntryId || getScheduleEntryDay(entry) !== dayOfWeek) {
+        return false
+      }
+
+      const entryStartIndex = getTimeIndex(getScheduleEntryStartTime(entry))
+      const entryEndIndex = getTimeIndex(getScheduleEntryEndTime(entry))
+
+      return startIndex < entryEndIndex && entryStartIndex < endIndex
+    })
+  }
+
+  const createScheduleEntryFromDrop = async ({ customerId, dayOfWeek, startTime }) => {
     if (isSavingSchedule) {
       return
     }
 
     if (selectedEmployeeId === null) {
-      setLoadError('Bitte zuerst einen Mitarbeiter auswaehlen.')
+      setLoadError('Bitte zuerst einen Mitarbeiter auswählen.')
       return
     }
 
-    if (!currentUser) {
-      setLoadError('Bitte zuerst anmelden.')
+    const startIndex = getTimeIndex(startTime)
+    const defaultEndTime = timeOptions[startIndex + 1]
+
+    if (!Number.isInteger(customerId) || customerId <= 0 || !defaultEndTime) {
+      setLoadError('Dieser Kunde konnte nicht eingeplant werden.')
       return
     }
 
-    if (!Number.isInteger(customerId) || customerId <= 0) {
-      setLoadError('Bitte einen gueltigen Kunden fuer den Einsatz waehlen.')
+    if (scheduledCustomerIds.has(customerId)) {
+      setLoadError('Dieser Kunde ist für den ausgewählten Mitarbeiter in dieser Woche bereits eingeplant.')
       return
     }
 
-    if (scheduleForm.startTime >= scheduleForm.endTime) {
-      setLoadError('Die Endzeit muss spaeter als die Startzeit sein.')
+    if (hasScheduleConflict({ dayOfWeek, startTime, endTime: defaultEndTime })) {
+      setLoadError('Dieses Zeitfenster ist bereits belegt.')
       return
     }
 
@@ -590,10 +700,10 @@ function App() {
           customer_id: customerId,
           year,
           calendar_week: calendarWeek,
-          day_of_week: scheduleForm.dayOfWeek,
-          start_time: scheduleForm.startTime,
-          end_time: scheduleForm.endTime,
-          notes: notes || null,
+          day_of_week: dayOfWeek,
+          start_time: startTime,
+          end_time: defaultEndTime,
+          notes: null,
         }),
       })
 
@@ -601,7 +711,6 @@ function App() {
         sortScheduleEntries([...currentEntries, createdScheduleEntry]),
       )
       setLoadError('')
-      resetScheduleForm()
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
         resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
@@ -614,15 +723,221 @@ function App() {
     }
   }
 
-  const getScheduleEntriesForCell = (day, time) =>
-    scheduleEntries.filter(
-      (entry) =>
-        entry.year === year &&
-        entry.calendar_week === calendarWeek &&
-        getScheduleEntryDay(entry) === day &&
-        getScheduleEntryStartTime(entry) === time &&
-        (selectedEmployeeId === null || entry.employee_id === selectedEmployeeId),
+  const deleteScheduleEntry = async (entryId) => {
+    if (isSavingSchedule) {
+      return
+    }
+
+    setIsSavingSchedule(true)
+
+    try {
+      await apiRequest(`/schedule_entries/${entryId}`, {
+        method: 'DELETE',
+        accessToken: authToken,
+      })
+
+      setScheduleEntries((currentEntries) =>
+        currentEntries.filter((entry) => entry.id !== entryId),
+      )
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setLoadError(error.message || 'Einsatz konnte nicht gelöscht werden.')
+    } finally {
+      setIsSavingSchedule(false)
+    }
+  }
+
+  const handleResizeStart = (entry, event) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    setResizeState({
+      entryId: entry.id,
+      dayOfWeek: getScheduleEntryDay(entry),
+      startTime: getScheduleEntryStartTime(entry),
+      originalEndTime: getScheduleEntryEndTime(entry),
+      previewEndTime: getScheduleEntryEndTime(entry),
+      startClientY: event.clientY,
+    })
+    setLoadError('')
+  }
+
+  const handleCustomerDragStart = (customerId, event) => {
+    if (selectedEmployeeId === null) {
+      event.preventDefault()
+      setLoadError('Bitte zuerst einen Mitarbeiter auswählen.')
+      return
+    }
+
+    setDraggedCustomerId(customerId)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(customerId))
+    setLoadError('')
+  }
+
+  const handleCustomerDragEnd = () => {
+    setDraggedCustomerId(null)
+    setActiveDropCellKey('')
+  }
+
+  const handleScheduleCellDragOver = (day, time, event) => {
+    if (selectedEmployeeId === null || isSavingSchedule) {
+      return
+    }
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setActiveDropCellKey(getCellKey(day, time))
+  }
+
+  const handleScheduleCellDrop = async (day, time, event) => {
+    event.preventDefault()
+
+    const droppedCustomerId = Number(
+      event.dataTransfer.getData('text/plain') || draggedCustomerId || '',
     )
+
+    setActiveDropCellKey('')
+    setDraggedCustomerId(null)
+
+    await createScheduleEntryFromDrop({
+      customerId: droppedCustomerId,
+      dayOfWeek: day,
+      startTime: time,
+    })
+  }
+
+  const handleScheduleCellDragLeave = (day, time) => {
+    const leavingCellKey = getCellKey(day, time)
+    setActiveDropCellKey((currentCellKey) =>
+      currentCellKey === leavingCellKey ? '' : currentCellKey,
+    )
+  }
+
+  useEffect(() => {
+    if (!resizeState) {
+      return undefined
+    }
+
+    const getMaximumResizeSpan = (entry) => {
+      const startIndex = getTimeIndex(getScheduleEntryStartTime(entry))
+      if (startIndex < 0) {
+        return 1
+      }
+
+      const nextStartIndex = scheduleEntriesForCurrentViewRef.current
+        .filter(
+          (candidate) =>
+            candidate.id !== entry.id &&
+            getScheduleEntryDay(candidate) === getScheduleEntryDay(entry),
+        )
+        .map((candidate) => getTimeIndex(getScheduleEntryStartTime(candidate)))
+        .filter((candidateIndex) => candidateIndex > startIndex)
+        .sort((left, right) => left - right)[0]
+
+      const maxEndIndex =
+        nextStartIndex === undefined ? timeOptions.length - 1 : nextStartIndex
+
+      return Math.max(maxEndIndex - startIndex, 1)
+    }
+
+    const persistResizedDuration = async (entryId, nextEndTime) => {
+      if (isSavingSchedule) {
+        return
+      }
+
+      setIsSavingSchedule(true)
+
+      try {
+        const updatedScheduleEntry = await apiRequest(`/schedule_entries/${entryId}`, {
+          method: 'PATCH',
+          accessToken: authToken,
+          body: JSON.stringify({
+            end_time: nextEndTime,
+          }),
+        })
+
+        setScheduleEntries((currentEntries) =>
+          sortScheduleEntries(
+            currentEntries.map((entry) => (entry.id === entryId ? updatedScheduleEntry : entry)),
+          ),
+        )
+        setLoadError('')
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) {
+          resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+          return
+        }
+
+        setLoadError(error.message || 'Dauer konnte nicht aktualisiert werden.')
+      } finally {
+        setIsSavingSchedule(false)
+      }
+    }
+
+    const handleMouseMove = (event) => {
+      const currentResizeState = resizeStateRef.current
+      if (!currentResizeState) {
+        return
+      }
+
+      const entry = scheduleEntriesForCurrentViewRef.current.find(
+        (scheduleEntry) => scheduleEntry.id === currentResizeState.entryId,
+      )
+      if (!entry) {
+        return
+      }
+
+      const startIndex = getTimeIndex(currentResizeState.startTime)
+      const originalEndIndex = getTimeIndex(currentResizeState.originalEndTime)
+      const originalSpan = Math.max(originalEndIndex - startIndex, 1)
+      const deltaRows = Math.round((event.clientY - currentResizeState.startClientY) / SCHEDULE_ROW_HEIGHT)
+      const maxSpan = getMaximumResizeSpan(entry)
+      const nextSpan = Math.min(Math.max(originalSpan + deltaRows, 1), maxSpan)
+      const nextEndTime = timeOptions[startIndex + nextSpan]
+
+      setResizeState((previousResizeState) => {
+        if (!previousResizeState || previousResizeState.previewEndTime === nextEndTime) {
+          return previousResizeState
+        }
+
+        return {
+          ...previousResizeState,
+          previewEndTime: nextEndTime,
+        }
+      })
+    }
+
+    const handleMouseUp = () => {
+      const finalResizeState = resizeStateRef.current
+      setResizeState(null)
+
+      if (
+        !finalResizeState ||
+        finalResizeState.previewEndTime === finalResizeState.originalEndTime
+      ) {
+        return
+      }
+
+      void persistResizedDuration(
+        finalResizeState.entryId,
+        finalResizeState.previewEndTime,
+      )
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [authToken, isSavingSchedule, resizeState])
 
   if (!isAuthenticated) {
     return (
@@ -638,7 +953,7 @@ function App() {
           <div className="auth-panel-header">
             <h2>Login</h2>
             <p className="panel-note">
-              Melde dich mit deinem Benutzerkonto an. Geschuetzte Backend-Routen werden danach
+              Melde dich mit deinem Benutzerkonto an. Geschützte Backend-Routen werden danach
               automatisch mit Bearer-Token aufgerufen.
             </p>
           </div>
@@ -677,12 +992,12 @@ function App() {
             </div>
             <div className="form-actions auth-actions">
               <button type="submit" className="action-button form-button" disabled={isLoggingIn}>
-                {isLoggingIn ? 'Prueft...' : 'Anmelden'}
+                {isLoggingIn ? 'Prüft...' : 'Anmelden'}
               </button>
             </div>
           </form>
           <p className="panel-note auth-note">
-            Registrierung mit Invite-Code laeuft aktuell ueber `POST /auth/register`.
+            Registrierung mit Invite-Code läuft aktuell über `POST /auth/register`.
           </p>
         </section>
       </main>
@@ -700,7 +1015,10 @@ function App() {
           <div className="session-pill">
             <span className="session-label">Angemeldet</span>
             <strong>{currentUser.email}</strong>
-            <span className="session-meta">Rolle: {currentUser.role}</span>
+            {currentAccount ? (
+              <span className="session-meta">Account: {currentAccount.name}</span>
+            ) : null}
+            <span className="session-meta">Rolle: {currentMembershipRole}</span>
           </div>
           <button type="button" className="secondary-button header-button" onClick={handleLogout}>
             Logout
@@ -714,7 +1032,6 @@ function App() {
         <div className="section-header">
           <div>
             <h2>Mitarbeiter</h2>
-            <p className="panel-note">Mitarbeiter werden automatisch deinem eingeloggten Account zugeordnet.</p>
           </div>
           <button
             type="button"
@@ -791,7 +1108,7 @@ function App() {
                       lastName: event.target.value,
                     }))
                   }
-                  placeholder="Oezcan"
+                  placeholder="Özcan"
                 />
               </div>
             </div>
@@ -810,7 +1127,7 @@ function App() {
               />
             </div>
             <p className="form-hint">
-              Der Mitarbeiter gehoert automatisch zu deinem Account.
+              Der Mitarbeiter gehört automatisch zu deinem Account.
             </p>
             <div className="form-actions">
               <button
@@ -857,10 +1174,13 @@ function App() {
       <section className="content">
         <div className="panel schedule-panel">
           <div className="schedule-header">
-            <h2>Dienstplan</h2>
-            <p className="selected-employee">
-              Ausgewaehlter Mitarbeiter: <span>{selectedEmployeeLabel}</span>
-            </p>
+            <p className="schedule-employee-name">{selectedEmployeeLabel}</p>
+            {scheduleDateRangeLabel ? (
+              <p className="schedule-date-range">{scheduleDateRangeLabel}</p>
+            ) : (
+              <span className="schedule-date-range-placeholder" aria-hidden="true" />
+            )}
+            <span className="schedule-header-spacer" aria-hidden="true" />
           </div>
           <div className="table-wrapper">
             <table className="schedule-table">
@@ -879,30 +1199,87 @@ function App() {
                       {time}
                     </th>
                     {weekdays.map((day) => {
-                      const cellEntries = getScheduleEntriesForCell(day, time)
+                      const cellKey = getCellKey(day, time)
+
+                      if (coveredScheduleCellKeys.has(cellKey)) {
+                        return null
+                      }
+
+                      const entry = scheduleEntriesByStartCell.get(cellKey)
+
+                      if (entry) {
+                        const customer = customersById[entry.customer_id]
+                        const displayEndTime =
+                          resizeState?.entryId === entry.id
+                            ? resizeState.previewEndTime
+                            : getScheduleEntryEndTime(entry)
+                        const rowSpan = Math.max(
+                          getTimeIndex(displayEndTime) -
+                            getTimeIndex(getScheduleEntryStartTime(entry)),
+                          1,
+                        )
+                        const isResizingEntry = resizeState?.entryId === entry.id
+
+                        return (
+                          <td
+                            key={`${time}-${day}`}
+                            rowSpan={rowSpan}
+                            aria-label={`${day} ${time}`}
+                            className="schedule-entry-cell"
+                          >
+                            <article
+                              className={`schedule-entry-card${
+                                isResizingEntry ? ' schedule-entry-card-resizing' : ''
+                              }`}
+                              title={`${customer?.name ?? `Kunde #${entry.customer_id}`} bis ${displayEndTime}`}
+                              style={{
+                                backgroundColor: customer?.color ?? '#475569',
+                                minHeight: `calc(var(--schedule-row-height) * ${rowSpan} - 2px)`,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="schedule-entry-delete"
+                                aria-label="Einsatz entfernen"
+                                disabled={isSavingSchedule}
+                                onClick={() => deleteScheduleEntry(entry.id)}
+                              >
+                                ×
+                              </button>
+                              <span className="schedule-entry-name">
+                                {customer?.name ?? `Kunde #${entry.customer_id}`}
+                              </span>
+                              <span className="schedule-entry-time">
+                                {getScheduleEntryStartTime(entry)} - {displayEndTime}
+                              </span>
+                              <button
+                                type="button"
+                                className="schedule-entry-resize"
+                                aria-label="Einsatzdauer anpassen"
+                                onMouseDown={(event) => handleResizeStart(entry, event)}
+                              >
+                                ⌄
+                              </button>
+                            </article>
+                          </td>
+                        )
+                      }
+
+                      const isDropTarget = activeDropCellKey === cellKey
 
                       return (
-                        <td key={`${time}-${day}`} aria-label={`${day} ${time}`}>
-                          <div className="schedule-cell-content">
-                            {cellEntries.map((entry) => {
-                              const customer = customersById[entry.customer_id]
-                              const endTime = getScheduleEntryEndTime(entry)
-
-                              return (
-                                <span
-                                  key={entry.id}
-                                  className="schedule-entry"
-                                  title={`${customer?.name ?? `Kunde #${entry.customer_id}`}${
-                                    endTime ? ` bis ${endTime}` : ''
-                                  }`}
-                                  style={{
-                                    backgroundColor: customer?.color ?? '#475569',
-                                  }}
-                                >
-                                  {customer?.name ?? `Kunde #${entry.customer_id}`}
-                                </span>
-                              )
-                            })}
+                        <td
+                          key={`${time}-${day}`}
+                          aria-label={`${day} ${time}`}
+                          className={`schedule-drop-zone${
+                            isDropTarget ? ' schedule-drop-zone-active' : ''
+                          }`}
+                          onDragOver={(event) => handleScheduleCellDragOver(day, time, event)}
+                          onDrop={(event) => handleScheduleCellDrop(day, time, event)}
+                          onDragLeave={() => handleScheduleCellDragLeave(day, time)}
+                        >
+                          <div className="schedule-drop-cell">
+                            {draggedCustomerId !== null ? 'Hier ablegen' : ''}
                           </div>
                         </td>
                       )
@@ -916,14 +1293,27 @@ function App() {
 
         <aside className="sidebar">
           <section className="panel sidebar-panel">
-            <h2>Kunden</h2>
+            <div className="section-header section-header-stack">
+              <div>
+                <h2>Offene Kunden</h2>
+                <p className="panel-note">
+                  Bereits eingeplante Kunden verschwinden für diese Woche und diesen Mitarbeiter aus
+                  der Liste.
+                </p>
+              </div>
+            </div>
             <div className="customer-list">
-              {customers.length > 0 ? (
-                customers.map((customer) => (
+              {availableCustomers.length > 0 ? (
+                availableCustomers.map((customer) => (
                   <article
                     key={customer.id}
-                    className="customer-card"
+                    className={`customer-card${
+                      draggedCustomerId === customer.id ? ' customer-card-dragging' : ''
+                    }${selectedEmployeeId === null ? ' customer-card-disabled' : ''}`}
                     style={{ backgroundColor: customer.color }}
+                    draggable={selectedEmployeeId !== null && !isSavingSchedule}
+                    onDragStart={(event) => handleCustomerDragStart(customer.id, event)}
+                    onDragEnd={handleCustomerDragEnd}
                   >
                     <div className="customer-card-content">
                       <span>{customer.name}</span>
@@ -933,6 +1323,13 @@ function App() {
                     </div>
                   </article>
                 ))
+              ) : customers.length > 0 && selectedEmployeeId !== null ? (
+                <p className="empty-state">
+                  Alle Kunden für {selectedEmployeeLabel} in KW {calendarWeek}/{year} sind bereits
+                  eingeplant.
+                </p>
+              ) : selectedEmployeeId === null ? (
+                <p className="empty-state">Wähle zuerst einen Mitarbeiter zum Planen aus.</p>
               ) : (
                 <p className="empty-state">Keine Kunden vorhanden.</p>
               )}
@@ -960,38 +1357,20 @@ function App() {
                   required
                 />
               </div>
-              <div className="form-grid">
-                <div className="form-field">
-                  <label htmlFor="customer-color">Farbe</label>
-                  <input
-                    id="customer-color"
-                    type="text"
-                    value={customerForm.color}
-                    onChange={(event) =>
-                      setCustomerForm((currentForm) => ({
-                        ...currentForm,
-                        color: event.target.value,
-                      }))
-                    }
-                    placeholder="#2563eb"
-                    required
-                  />
-                </div>
-                <div className="form-field">
-                  <label htmlFor="customer-address">Adresse</label>
-                  <input
-                    id="customer-address"
-                    type="text"
-                    value={customerForm.address}
-                    onChange={(event) =>
-                      setCustomerForm((currentForm) => ({
-                        ...currentForm,
-                        address: event.target.value,
-                      }))
-                    }
-                    placeholder="Wiener Strasse 1"
-                  />
-                </div>
+              <div className="form-field">
+                <label htmlFor="customer-address">Adresse</label>
+                <input
+                  id="customer-address"
+                  type="text"
+                  value={customerForm.address}
+                  onChange={(event) =>
+                    setCustomerForm((currentForm) => ({
+                      ...currentForm,
+                      address: event.target.value,
+                    }))
+                  }
+                  placeholder="Wiener Straße 1"
+                />
               </div>
               <div className="form-field">
                 <label htmlFor="customer-notes">Notizen</label>
@@ -1004,7 +1383,7 @@ function App() {
                       notes: event.target.value,
                     }))
                   }
-                  placeholder="Zugang, Schluessel, Besonderheiten"
+                  placeholder="Zugang, Schlüssel, Besonderheiten"
                 />
               </div>
               <div className="form-actions">
@@ -1021,157 +1400,12 @@ function App() {
                   disabled={isSavingCustomer}
                   onClick={resetCustomerForm}
                 >
-                  Zuruecksetzen
+                  Zurücksetzen
                 </button>
               </div>
             </form>
           </section>
 
-          <section className="panel sidebar-panel">
-            <div className="section-header">
-              <div>
-                <h2>Einsatz erstellen</h2>
-                <p className="panel-note">
-                  {selectedEmployee
-                    ? `Fuer ${selectedEmployeeLabel} in KW ${calendarWeek}/${year}.`
-                    : 'Zuerst einen Mitarbeiter auswaehlen.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Einsatz erstellen"
-                disabled={isLoading || selectedEmployeeId === null || customers.length === 0}
-                onClick={() => setIsScheduleFormOpen(true)}
-              >
-                +
-              </button>
-            </div>
-            {selectedEmployeeId === null ? (
-              <p className="empty-state">Kein Mitarbeiter ausgewaehlt.</p>
-            ) : null}
-            {selectedEmployeeId !== null && customers.length === 0 ? (
-              <p className="empty-state">Lege zuerst einen Kunden an.</p>
-            ) : null}
-            {isScheduleFormOpen ? (
-              <form className="form-card" onSubmit={handleScheduleSubmit}>
-                <div className="form-grid">
-                  <div className="form-field">
-                    <label htmlFor="schedule-customer">Kunde</label>
-                    <select
-                      id="schedule-customer"
-                      value={scheduleForm.customerId}
-                      onChange={(event) =>
-                        setScheduleForm((currentForm) => ({
-                          ...currentForm,
-                          customerId: event.target.value,
-                        }))
-                      }
-                      required
-                    >
-                      {customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-field">
-                    <label htmlFor="schedule-day">Wochentag</label>
-                    <select
-                      id="schedule-day"
-                      value={scheduleForm.dayOfWeek}
-                      onChange={(event) =>
-                        setScheduleForm((currentForm) => ({
-                          ...currentForm,
-                          dayOfWeek: event.target.value,
-                        }))
-                      }
-                    >
-                      {weekdays.map((day) => (
-                        <option key={day} value={day}>
-                          {day}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-field">
-                    <label htmlFor="schedule-start-time">Startzeit</label>
-                    <select
-                      id="schedule-start-time"
-                      value={scheduleForm.startTime}
-                      onChange={(event) =>
-                        setScheduleForm((currentForm) => ({
-                          ...currentForm,
-                          startTime: event.target.value,
-                        }))
-                      }
-                    >
-                      {timeSlots.map((time) => (
-                        <option key={time} value={time}>
-                          {time}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-field">
-                    <label htmlFor="schedule-end-time">Endzeit</label>
-                    <select
-                      id="schedule-end-time"
-                      value={scheduleForm.endTime}
-                      onChange={(event) =>
-                        setScheduleForm((currentForm) => ({
-                          ...currentForm,
-                          endTime: event.target.value,
-                        }))
-                      }
-                    >
-                      {endTimeOptions.map((time) => (
-                        <option key={time} value={time}>
-                          {time}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="form-field">
-                  <label htmlFor="schedule-notes">Notizen</label>
-                  <textarea
-                    id="schedule-notes"
-                    value={scheduleForm.notes}
-                    onChange={(event) =>
-                      setScheduleForm((currentForm) => ({
-                        ...currentForm,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Hinweise zum Einsatz"
-                  />
-                </div>
-                <p className="form-hint">
-                  Jahr und Kalenderwoche kommen aus den oberen Steuerfeldern. Erstellt wird der
-                  Eintrag als {currentUser.email}.
-                </p>
-                <div className="form-actions">
-                  <button
-                    type="submit"
-                    className="action-button form-button"
-                    disabled={isSavingSchedule}
-                  >
-                    {isSavingSchedule ? 'Speichert...' : 'Einsatz speichern'}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button form-button"
-                    disabled={isSavingSchedule}
-                    onClick={resetScheduleForm}
-                  >
-                    Abbrechen
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </section>
         </aside>
       </section>
     </main>

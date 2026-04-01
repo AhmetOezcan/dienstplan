@@ -40,9 +40,19 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AccountRead(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RegisterResponse(BaseModel):
     message: str
     user: UserRead
+    account: AccountRead
+    membership_role: str
 
 
 class LoginRequest(BaseModel):
@@ -63,3 +73,5 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserRead
+    account: AccountRead
+    membership_role: str

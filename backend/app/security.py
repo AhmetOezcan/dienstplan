@@ -6,13 +6,17 @@ import json
 import os
 import secrets
 import time
+from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.account import Account
 from app.models.user import User
+from app.models.user_account_membership import UserAccountMembership
 
 
 PBKDF2_ALGORITHM = "sha256"
@@ -22,6 +26,13 @@ DEVELOPER_SECRET_ENV_VAR = "DEVELOPER_INVITE_CODE_SECRET"
 AUTH_TOKEN_SECRET_ENV_VAR = "AUTH_TOKEN_SECRET"
 ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 12
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    user: User
+    account: Account
+    membership: UserAccountMembership
 
 
 def hash_password(password: str) -> str:
@@ -109,12 +120,13 @@ def _get_auth_token_secret() -> str:
     return token_secret
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(user: User, account: Account, membership_role: str) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
     payload = {
         "sub": str(user.id),
+        "account_id": account.id,
         "email": user.email,
-        "role": user.role,
+        "membership_role": membership_role,
         "exp": int(time.time()) + ACCESS_TOKEN_EXPIRE_SECONDS,
     }
 
@@ -174,10 +186,43 @@ def decode_access_token(token: str) -> dict:
     return payload
 
 
-def get_current_user(
+def get_active_membership_for_user(
+    user: User,
+    db: Session,
+    *,
+    account_id: int | None = None,
+) -> UserAccountMembership:
+    membership_query = (
+        select(UserAccountMembership)
+        .join(Account, UserAccountMembership.account_id == Account.id)
+        .where(
+            UserAccountMembership.user_id == user.id,
+            UserAccountMembership.is_active.is_(True),
+            Account.is_active.is_(True),
+        )
+        .order_by(UserAccountMembership.created_at.asc(), UserAccountMembership.id.asc())
+    )
+
+    if account_id is not None:
+        membership_query = membership_query.where(UserAccountMembership.account_id == account_id)
+
+    membership = db.scalar(membership_query)
+    if membership is None:
+        detail = "No active account membership found"
+        if account_id is not None:
+            detail = "Requested account membership is not available"
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail,
+        )
+
+    return membership
+
+
+def get_auth_context(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
-) -> User:
+) -> AuthContext:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -186,6 +231,7 @@ def get_current_user(
 
     token_payload = decode_access_token(credentials.credentials)
     subject = token_payload.get("sub")
+    token_account_id = token_payload.get("account_id")
 
     try:
         user_id = int(subject)
@@ -208,4 +254,29 @@ def get_current_user(
             detail="User is inactive",
         )
 
-    return user
+    try:
+        account_id = int(token_account_id) if token_account_id is not None else None
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+        ) from None
+
+    membership = get_active_membership_for_user(user, db, account_id=account_id)
+    account = membership.account
+
+    return AuthContext(user=user, account=account, membership=membership)
+
+
+def get_current_user(auth_context: AuthContext = Depends(get_auth_context)) -> User:
+    return auth_context.user
+
+
+def get_current_account(auth_context: AuthContext = Depends(get_auth_context)) -> Account:
+    return auth_context.account
+
+
+def get_current_membership(
+    auth_context: AuthContext = Depends(get_auth_context),
+) -> UserAccountMembership:
+    return auth_context.membership

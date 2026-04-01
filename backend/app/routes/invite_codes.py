@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.account import Account
 from app.models.invite_code import InviteCode
 from app.schemas.invite_code import InviteCodeCreate, InviteCodeRead
 from app.security import require_developer_key
@@ -27,6 +28,14 @@ def generate_invite_code(role: str) -> str:
 def create_invite_code(payload: InviteCodeCreate, db: Session = Depends(get_db)):
     code = payload.code or generate_invite_code(payload.role)
 
+    if payload.account_id is not None:
+        account = db.get(Account, payload.account_id)
+        if account is None or not account.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account not found",
+            )
+
     existing_code = db.scalar(select(InviteCode).where(InviteCode.code == code))
     if existing_code is not None:
         raise HTTPException(
@@ -34,7 +43,12 @@ def create_invite_code(payload: InviteCodeCreate, db: Session = Depends(get_db))
             detail="Invite code already exists",
         )
 
-    invite_code = InviteCode(code=code, role=payload.role, is_used=False)
+    invite_code = InviteCode(
+        account_id=payload.account_id,
+        code=code,
+        role=payload.role,
+        is_used=False,
+    )
     db.add(invite_code)
 
     try:

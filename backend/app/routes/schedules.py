@@ -4,25 +4,27 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.account import Account
 from app.models.customer import Customer
 from app.models.employee import Employee
 from app.models.schedule_entry import ScheduleEntry
 from app.models.user import User
 from app.schemas.schedule import ScheduleEntryCreate, ScheduleEntryRead, ScheduleEntryUpdate
-from app.security import get_current_user
+from app.security import get_auth_context, get_current_account, get_current_user
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(get_auth_context)])
 
 
 def get_schedule_entry_or_404(
     schedule_entry_id: int,
-    owner_user_id: int,
+    account_id: int,
     db: Session,
 ) -> ScheduleEntry:
     schedule_entry = db.scalar(
-        select(ScheduleEntry)
-        .join(Employee, ScheduleEntry.employee_id == Employee.id)
-        .where(ScheduleEntry.id == schedule_entry_id, Employee.user_id == owner_user_id)
+        select(ScheduleEntry).where(
+            ScheduleEntry.id == schedule_entry_id,
+            ScheduleEntry.account_id == account_id,
+        )
     )
     if schedule_entry is None:
         raise HTTPException(
@@ -32,19 +34,21 @@ def get_schedule_entry_or_404(
     return schedule_entry
 
 
-def ensure_schedule_references_exist(data: dict, owner_user_id: int, db: Session) -> None:
+def ensure_schedule_references_exist(data: dict, account_id: int, db: Session) -> None:
     if "employee_id" in data and db.scalar(
-        select(Employee).where(Employee.id == data["employee_id"], Employee.user_id == owner_user_id)
+        select(Employee).where(Employee.id == data["employee_id"], Employee.account_id == account_id)
     ) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Referenced employee does not exist in your account",
         )
 
-    if "customer_id" in data and db.get(Customer, data["customer_id"]) is None:
+    if "customer_id" in data and db.scalar(
+        select(Customer).where(Customer.id == data["customer_id"], Customer.account_id == account_id)
+    ) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Referenced customer does not exist",
+            detail="Referenced customer does not exist in your account",
         )
 
 
@@ -61,7 +65,7 @@ def validate_schedule_times(start_time, end_time) -> None:
 @router.get("/schedule-entries", response_model=list[ScheduleEntryRead])
 def list_schedule_entries(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_account: Account = Depends(get_current_account),
 ):
     return db.scalars(
         select(ScheduleEntry).order_by(
@@ -70,8 +74,7 @@ def list_schedule_entries(
             ScheduleEntry.day_of_week.asc(),
             ScheduleEntry.start_time.asc(),
         )
-        .join(Employee, ScheduleEntry.employee_id == Employee.id)
-        .where(Employee.user_id == current_user.id)
+        .where(ScheduleEntry.account_id == current_account.id)
     ).all()
 
 
@@ -80,9 +83,9 @@ def list_schedule_entries(
 def get_schedule_entry(
     schedule_entry_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_account: Account = Depends(get_current_account),
 ):
-    return get_schedule_entry_or_404(schedule_entry_id, current_user.id, db)
+    return get_schedule_entry_or_404(schedule_entry_id, current_account.id, db)
 
 
 @router.post(
@@ -98,11 +101,13 @@ def get_schedule_entry(
 def create_schedule_entry(
     payload: ScheduleEntryCreate,
     db: Session = Depends(get_db),
+    current_account: Account = Depends(get_current_account),
     current_user: User = Depends(get_current_user),
 ):
     schedule_entry_data = payload.model_dump()
+    schedule_entry_data["account_id"] = current_account.id
     schedule_entry_data["created_by_user_id"] = current_user.id
-    ensure_schedule_references_exist(schedule_entry_data, current_user.id, db)
+    ensure_schedule_references_exist(schedule_entry_data, current_account.id, db)
     validate_schedule_times(
         schedule_entry_data["start_time"],
         schedule_entry_data["end_time"],
@@ -130,13 +135,14 @@ def update_schedule_entry(
     schedule_entry_id: int,
     payload: ScheduleEntryUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_account: Account = Depends(get_current_account),
 ):
-    schedule_entry = get_schedule_entry_or_404(schedule_entry_id, current_user.id, db)
+    schedule_entry = get_schedule_entry_or_404(schedule_entry_id, current_account.id, db)
     updates = payload.model_dump(exclude_unset=True)
     updates.pop("created_by_user_id", None)
+    updates.pop("account_id", None)
 
-    ensure_schedule_references_exist(updates, current_user.id, db)
+    ensure_schedule_references_exist(updates, current_account.id, db)
     validate_schedule_times(
         updates.get("start_time", schedule_entry.start_time),
         updates.get("end_time", schedule_entry.end_time),
@@ -163,9 +169,9 @@ def update_schedule_entry(
 def delete_schedule_entry(
     schedule_entry_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_account: Account = Depends(get_current_account),
 ):
-    schedule_entry = get_schedule_entry_or_404(schedule_entry_id, current_user.id, db)
+    schedule_entry = get_schedule_entry_or_404(schedule_entry_id, current_account.id, db)
     db.delete(schedule_entry)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class InviteCodeCreate(BaseModel):
     role: str = Field(min_length=1, max_length=50)
     code: str | None = Field(default=None, min_length=1, max_length=64)
+    account_id: int | None = Field(default=None, ge=1)
 
     @field_validator("role")
     @classmethod
@@ -23,11 +24,12 @@ class InviteCodeCreate(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("Code must not be empty")
-        return normalized
+        return normalizeds
 
 
 class InviteCodeRead(BaseModel):
     id: int
+    account_id: int | None
     code: str
     role: str
     is_used: bool

@@ -8,6 +8,7 @@ class ScheduleEntry(Base):
     __tablename__ = "schedule_entries"
 
     id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     year = Column(Integer, nullable=False, index=True)
@@ -25,6 +26,7 @@ class ScheduleEntry(Base):
         onupdate=func.now(),
     )
 
+    account = relationship("Account", back_populates="schedule_entries")
     employee = relationship("Employee", back_populates="schedule_entries")
     customer = relationship("Customer", back_populates="schedule_entries")
     created_by_user = relationship(

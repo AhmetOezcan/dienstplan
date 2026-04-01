@@ -8,12 +8,14 @@ class InviteCode(Base):
     __tablename__ = "invite_codes"
 
     id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True, index=True)
     code = Column(String(64), unique=True, index=True, nullable=False)
     role = Column(String(50), nullable=False)
     is_used = Column(Boolean, nullable=False, default=False)
     used_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    account = relationship("Account", back_populates="invite_codes")
     used_by_user = relationship(
         "User",
         back_populates="used_invite_codes",

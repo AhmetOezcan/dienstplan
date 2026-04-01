@@ -15,7 +15,7 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    employees = relationship("Employee", back_populates="user")
+    account_memberships = relationship("UserAccountMembership", back_populates="user")
     used_invite_codes = relationship(
         "InviteCode",
         back_populates="used_by_user",

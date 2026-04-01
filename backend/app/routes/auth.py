@@ -4,8 +4,15 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import LoginRequest, LoginResponse, RegisterResponse, UserRead, UserRegister
-from app.security import create_access_token, verify_password
+from app.schemas.user import (
+    AccountRead,
+    LoginRequest,
+    LoginResponse,
+    RegisterResponse,
+    UserRead,
+    UserRegister,
+)
+from app.security import create_access_token, get_active_membership_for_user, verify_password
 from app.services.user_registration import register_user_with_invite_code
 
 router = APIRouter()
@@ -32,11 +39,14 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail="User is inactive",
         )
 
-    access_token = create_access_token(user)
+    membership = get_active_membership_for_user(user, db)
+    access_token = create_access_token(user, membership.account, membership.role)
 
     return LoginResponse(
         message="Login successful",
         access_token=access_token,
         token_type="bearer",
         user=UserRead.model_validate(user),
+        account=AccountRead.model_validate(membership.account),
+        membership_role=membership.role,
     )
