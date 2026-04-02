@@ -7,7 +7,7 @@ from app.database import Base
 class Account(Base):
     __tablename__ = "accounts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

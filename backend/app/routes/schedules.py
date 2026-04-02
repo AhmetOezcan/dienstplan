@@ -69,10 +69,9 @@ def list_schedule_entries(
 ):
     return db.scalars(
         select(ScheduleEntry).order_by(
-            ScheduleEntry.year.asc(),
-            ScheduleEntry.calendar_week.asc(),
-            ScheduleEntry.day_of_week.asc(),
+            ScheduleEntry.date.asc(),
             ScheduleEntry.start_time.asc(),
+            ScheduleEntry.id.asc(),
         )
         .where(ScheduleEntry.account_id == current_account.id)
     ).all()

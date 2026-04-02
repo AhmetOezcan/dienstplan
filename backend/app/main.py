@@ -1,9 +1,6 @@
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import app.models  # noqa: F401
-from app.database import Base, engine
+from app.database import engine
 
 from app.routes.auth import router as auth_router
 from app.routes.employees import router as employees_router
@@ -12,15 +9,8 @@ from app.routes.customers import router as customers_router
 from app.routes.schedules import router as schedules_router
 from app.routes.users import router as users_router
 
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    yield
-
-
 #App starten
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 #Kommunikation mit frontend und backend erlauben
 app.add_middleware(

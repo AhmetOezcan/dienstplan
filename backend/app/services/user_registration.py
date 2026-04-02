@@ -52,7 +52,6 @@ def register_user_with_invite_code(payload: UserRegister, db: Session) -> Regist
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
-        role=membership_role,
         is_active=True,
     )
     db.add(user)

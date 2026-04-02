@@ -186,13 +186,13 @@ def decode_access_token(token: str) -> dict:
     return payload
 
 
-def get_active_membership_for_user(
+def get_single_account_membership_for_user(
     user: User,
     db: Session,
     *,
     account_id: int | None = None,
 ) -> UserAccountMembership:
-    membership_query = (
+    memberships = db.scalars(
         select(UserAccountMembership)
         .join(Account, UserAccountMembership.account_id == Account.id)
         .where(
@@ -201,19 +201,28 @@ def get_active_membership_for_user(
             Account.is_active.is_(True),
         )
         .order_by(UserAccountMembership.created_at.asc(), UserAccountMembership.id.asc())
-    )
+    ).all()
 
-    if account_id is not None:
-        membership_query = membership_query.where(UserAccountMembership.account_id == account_id)
-
-    membership = db.scalar(membership_query)
-    if membership is None:
+    if not memberships:
         detail = "No active account membership found"
         if account_id is not None:
             detail = "Requested account membership is not available"
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=detail,
+        )
+
+    if len(memberships) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User has multiple active account memberships; single-account model violated",
+        )
+
+    membership = memberships[0]
+    if account_id is not None and membership.account_id != account_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requested account membership is not available",
         )
 
     return membership
@@ -262,7 +271,7 @@ def get_auth_context(
             detail="Invalid authentication token",
         ) from None
 
-    membership = get_active_membership_for_user(user, db, account_id=account_id)
+    membership = get_single_account_membership_for_user(user, db, account_id=account_id)
     account = membership.account
 
     return AuthContext(user=user, account=account, membership=membership)

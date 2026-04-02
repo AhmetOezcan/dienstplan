@@ -1,0 +1,97 @@
+@startuml
+hide methods
+hide stereotypes
+skinparam classAttributeIconSize 0
+
+entity accounts {
+  * id : int
+  --
+  name : string
+}
+
+entity users {
+  * id : int
+  --
+  email : string
+  password_hash : string
+  role : string
+  is_active : bool
+  created_at : datetime
+}
+
+entity user_account_memberships {
+  * id : int
+  --
+  user_id : int
+  account_id : int
+  role : string
+  created_at : datetime
+}
+
+entity invite_codes {
+  * id : int
+  --
+  code : string
+  role : string
+  is_used : bool
+  account_id : int <<nullable>>
+  used_by_user_id : int <<nullable>>
+  created_at : datetime
+}
+
+entity employees {
+  * id : int
+  --
+  account_id : int
+  user_id : int <<nullable>>
+  first_name : string
+  last_name : string
+  phone : string
+  notes : text
+  is_active : bool
+  created_at : datetime
+}
+
+entity customers {
+  * id : int
+  --
+  account_id : int
+  name : string
+  address : string
+  color : string
+  notes : text
+  is_active : bool
+  created_at : datetime
+}
+
+entity schedule_entries {
+  * id : int
+  --
+  account_id : int
+  employee_id : int
+  customer_id : int
+  created_by_user_id : int
+  date : date
+  start_time : time
+  end_time : time
+  notes : text
+  created_at : datetime
+}
+
+accounts ||--o{ user_account_memberships : has
+users ||--o{ user_account_memberships : belongs to
+
+accounts ||--o{ invite_codes : owns
+users ||--o{ invite_codes : used_by
+
+accounts ||--o{ employees : has
+users ||--o{ employees : linked_user
+
+accounts ||--o{ customers : has
+
+accounts ||--o{ schedule_entries : has
+employees ||--o{ schedule_entries : assigned_to
+customers ||--o{ schedule_entries : for
+users ||--o{ schedule_entries : created_by
+
+@enduml

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -6,9 +6,19 @@ from app.database import Base
 
 class Employee(Base):
     __tablename__ = "employees"
+    __table_args__ = (
+        UniqueConstraint("account_id", "id", name="uq_employees_account_id_id"),
+        Index(
+            "ix_employees_account_id_first_name_last_name",
+            "account_id",
+            "first_name",
+            "last_name",
+        ),
+    )
 
-    id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     phone = Column(String(50), nullable=True)
@@ -17,4 +27,9 @@ class Employee(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     account = relationship("Account", back_populates="employees")
-    schedule_entries = relationship("ScheduleEntry", back_populates="employee")
+    linked_user = relationship("User", foreign_keys=[user_id])
+    schedule_entries = relationship(
+        "ScheduleEntry",
+        back_populates="employee",
+        foreign_keys="ScheduleEntry.employee_id",
+    )

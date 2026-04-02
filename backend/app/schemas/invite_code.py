@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.roles import normalize_membership_role
+
 
 class InviteCodeCreate(BaseModel):
     role: str = Field(min_length=1, max_length=50)
@@ -11,10 +13,7 @@ class InviteCodeCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def normalize_role(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Role must not be empty")
-        return normalized
+        return normalize_membership_role(value)
 
     @field_validator("code")
     @classmethod
@@ -24,7 +23,7 @@ class InviteCodeCreate(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("Code must not be empty")
-        return normalizeds
+        return normalized
 
 
 class InviteCodeRead(BaseModel):

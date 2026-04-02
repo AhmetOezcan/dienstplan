@@ -12,7 +12,7 @@ from app.schemas.user import (
     UserRead,
     UserRegister,
 )
-from app.security import create_access_token, get_active_membership_for_user, verify_password
+from app.security import create_access_token, get_single_account_membership_for_user, verify_password
 from app.services.user_registration import register_user_with_invite_code
 
 router = APIRouter()
@@ -39,7 +39,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail="User is inactive",
         )
 
-    membership = get_active_membership_for_user(user, db)
+    membership = get_single_account_membership_for_user(user, db)
     access_token = create_access_token(user, membership.account, membership.role)
 
     return LoginResponse(

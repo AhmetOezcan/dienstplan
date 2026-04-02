@@ -25,7 +25,7 @@ const timeSlots = [
 ]
 
 const timeOptions = [...timeSlots, '18:00']
-const dayOrder = Object.fromEntries(weekdays.map((day, index) => [day, index]))
+const weekdayNumberByName = Object.fromEntries(weekdays.map((day, index) => [day, index + 1]))
 const timeIndexByValue = Object.fromEntries(timeOptions.map((time, index) => [time, index]))
 const CUSTOMER_COLOR_OPTIONS = [
   '#ef4444',
@@ -184,9 +184,16 @@ function formatShortDate(date) {
   return `${day}. ${month}`
 }
 
-function getCalendarWeekDateRangeLabel(year, calendarWeek) {
+function formatIsoDate(date) {
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getStartDateOfIsoWeek(year, calendarWeek) {
   if (!Number.isInteger(year) || !Number.isInteger(calendarWeek) || calendarWeek < 1 || calendarWeek > 53) {
-    return ''
+    return null
   }
 
   const januaryFourth = new Date(Date.UTC(year, 0, 4))
@@ -196,6 +203,45 @@ function getCalendarWeekDateRangeLabel(year, calendarWeek) {
 
   const weekStart = new Date(mondayOfFirstWeek)
   weekStart.setUTCDate(mondayOfFirstWeek.getUTCDate() + (calendarWeek - 1) * 7)
+
+  return weekStart
+}
+
+function getIsoDateForWeekday(year, calendarWeek, day) {
+  const weekStart = getStartDateOfIsoWeek(year, calendarWeek)
+  const weekdayNumber = weekdayNumberByName[day]
+
+  if (!weekStart || !weekdayNumber) {
+    return ''
+  }
+
+  const targetDate = new Date(weekStart)
+  targetDate.setUTCDate(weekStart.getUTCDate() + weekdayNumber - 1)
+
+  return formatIsoDate(targetDate)
+}
+
+function isIsoDateInCalendarWeek(dateValue, year, calendarWeek) {
+  if (typeof dateValue !== 'string') {
+    return false
+  }
+
+  const weekStart = getStartDateOfIsoWeek(year, calendarWeek)
+  if (!weekStart) {
+    return false
+  }
+
+  const weekEnd = new Date(weekStart)
+  weekEnd.setUTCDate(weekStart.getUTCDate() + 6)
+
+  return dateValue >= formatIsoDate(weekStart) && dateValue <= formatIsoDate(weekEnd)
+}
+
+function getCalendarWeekDateRangeLabel(year, calendarWeek) {
+  const weekStart = getStartDateOfIsoWeek(year, calendarWeek)
+  if (!weekStart) {
+    return ''
+  }
 
   const weekEnd = new Date(weekStart)
   weekEnd.setUTCDate(weekStart.getUTCDate() + 6)
@@ -258,6 +304,10 @@ function getScheduleEntryDay(entry) {
   return entry.day_of_week ?? entry.day ?? ''
 }
 
+function getScheduleEntryDate(entry) {
+  return entry.date ?? ''
+}
+
 function getScheduleEntryStartTime(entry) {
   if (entry.time) {
     return entry.time
@@ -282,21 +332,9 @@ function sortCustomers(items) {
 
 function sortScheduleEntries(items) {
   return [...items].sort((left, right) => {
-    const yearDiff = left.year - right.year
-    if (yearDiff !== 0) {
-      return yearDiff
-    }
-
-    const weekDiff = left.calendar_week - right.calendar_week
-    if (weekDiff !== 0) {
-      return weekDiff
-    }
-
-    const dayDiff =
-      (dayOrder[getScheduleEntryDay(left)] ?? Number.MAX_SAFE_INTEGER) -
-      (dayOrder[getScheduleEntryDay(right)] ?? Number.MAX_SAFE_INTEGER)
-    if (dayDiff !== 0) {
-      return dayDiff
+    const dateDiff = getScheduleEntryDate(left).localeCompare(getScheduleEntryDate(right), 'de')
+    if (dateDiff !== 0) {
+      return dateDiff
     }
 
     return getScheduleEntryStartTime(left).localeCompare(getScheduleEntryStartTime(right), 'de')
@@ -340,7 +378,7 @@ function App() {
   const authToken = authSession.accessToken
   const currentUser = authSession.user
   const currentAccount = authSession.account
-  const currentMembershipRole = authSession.membershipRole || currentUser?.role || ''
+  const currentMembershipRole = authSession.membershipRole
   const isAuthenticated = Boolean(authToken && currentUser)
 
   useEffect(() => {
@@ -447,8 +485,7 @@ function App() {
       ? []
       : scheduleEntries.filter(
           (entry) =>
-            entry.year === year &&
-            entry.calendar_week === calendarWeek &&
+            isIsoDateInCalendarWeek(getScheduleEntryDate(entry), year, calendarWeek) &&
             entry.employee_id === selectedEmployeeId,
         )
   const scheduledCustomerIds = new Set(
@@ -692,15 +729,18 @@ function App() {
     setIsSavingSchedule(true)
 
     try {
+      const scheduleDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
+      if (!scheduleDate) {
+        throw new Error('Für die ausgewählte Kalenderwoche konnte kein gültiges Datum ermittelt werden.')
+      }
+
       const createdScheduleEntry = await apiRequest('/schedule_entries', {
         method: 'POST',
         accessToken: authToken,
         body: JSON.stringify({
           employee_id: selectedEmployeeId,
           customer_id: customerId,
-          year,
-          calendar_week: calendarWeek,
-          day_of_week: dayOfWeek,
+          date: scheduleDate,
           start_time: startTime,
           end_time: defaultEndTime,
           notes: null,
