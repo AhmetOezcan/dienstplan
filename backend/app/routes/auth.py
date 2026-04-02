@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,12 @@ from app.schemas.user import (
     UserRegister,
 )
 from app.security import create_access_token, get_single_account_membership_for_user, verify_password
+from app.services.login_abuse_protection import (
+    clear_email_login_rate_limit,
+    enforce_login_rate_limit,
+    get_login_client_ip,
+    register_failed_login,
+)
 from app.services.user_registration import register_user_with_invite_code
 
 router = APIRouter()
@@ -24,10 +30,14 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    client_ip = get_login_client_ip(request)
+    enforce_login_rate_limit(payload.email, client_ip, db)
+
     user = db.scalar(select(User).where(User.email == payload.email))
 
     if user is None or not verify_password(payload.password, user.password_hash):
+        register_failed_login(payload.email, client_ip, db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -41,6 +51,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     membership = get_single_account_membership_for_user(user, db)
     access_token = create_access_token(user, membership.account, membership.role)
+    clear_email_login_rate_limit(payload.email, db)
 
     return LoginResponse(
         message="Login successful",
