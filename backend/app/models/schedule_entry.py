@@ -35,6 +35,14 @@ class ScheduleEntry(Base):
             ["customers.account_id", "customers.id"],
             name="fk_schedule_entries_customer_account",
         ),
+        ForeignKeyConstraint(
+            ["account_id", "created_by_user_id"],
+            [
+                "user_account_memberships.account_id",
+                "user_account_memberships.user_id",
+            ],
+            name="fk_schedule_entries_created_by_user_account_membership",
+        ),
     )
 
     id = Column(Integer, primary_key=True)

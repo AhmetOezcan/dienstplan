@@ -1,4 +1,16 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -8,6 +20,14 @@ class Employee(Base):
     __tablename__ = "employees"
     __table_args__ = (
         UniqueConstraint("account_id", "id", name="uq_employees_account_id_id"),
+        ForeignKeyConstraint(
+            ["account_id", "user_id"],
+            [
+                "user_account_memberships.account_id",
+                "user_account_memberships.user_id",
+            ],
+            name="fk_employees_user_account_membership",
+        ),
         Index(
             "ix_employees_account_id_first_name_last_name",
             "account_id",

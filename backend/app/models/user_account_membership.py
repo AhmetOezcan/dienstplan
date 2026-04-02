@@ -9,6 +9,11 @@ class UserAccountMembership(Base):
     __tablename__ = "user_account_memberships"
     __table_args__ = (
         UniqueConstraint(
+            "account_id",
+            "user_id",
+            name="uq_user_account_memberships_account_user",
+        ),
+        UniqueConstraint(
             "user_id",
             name="uq_user_account_memberships_user",
         ),
