@@ -9,6 +9,10 @@ def _normalize_invite_code(value: str) -> str:
     return value.strip()
 
 
+def _normalize_full_name(value: str) -> str:
+    return " ".join(value.strip().split())
+
+
 class UserRegister(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=255)
@@ -34,6 +38,8 @@ class UserRegister(BaseModel):
 class UserRead(BaseModel):
     id: int
     email: str
+    full_name: str | None
+    must_complete_setup: bool
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
@@ -52,6 +58,24 @@ class RegisterResponse(BaseModel):
     user: UserRead
     account: AccountRead
     membership_role: str
+
+
+class CompleteUserSetupRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=255)
+    new_password: str = Field(min_length=8, max_length=255)
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        normalized = _normalize_full_name(value)
+        if not normalized:
+            raise ValueError("Name must not be empty")
+        return normalized
+
+
+class CompleteUserSetupResponse(BaseModel):
+    message: str
+    user: UserRead
 
 
 class LoginRequest(BaseModel):

@@ -25,6 +25,7 @@ SALT_BYTES = 16
 DEVELOPER_SECRET_ENV_VAR = "DEVELOPER_INVITE_CODE_SECRET"
 AUTH_TOKEN_SECRET_ENV_VAR = "AUTH_TOKEN_SECRET"
 ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 12
+INITIAL_ACCOUNT_SETUP_REQUIRED_DETAIL = "Initial account setup is required"
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -228,9 +229,11 @@ def get_single_account_membership_for_user(
     return membership
 
 
-def get_auth_context(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
+def _get_auth_context(
+    credentials: HTTPAuthorizationCredentials | None,
+    db: Session,
+    *,
+    allow_incomplete_setup: bool,
 ) -> AuthContext:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -263,6 +266,12 @@ def get_auth_context(
             detail="User is inactive",
         )
 
+    if user.must_complete_setup and not allow_incomplete_setup:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=INITIAL_ACCOUNT_SETUP_REQUIRED_DETAIL,
+        )
+
     try:
         account_id = int(token_account_id) if token_account_id is not None else None
     except (TypeError, ValueError):
@@ -275,6 +284,20 @@ def get_auth_context(
     account = membership.account
 
     return AuthContext(user=user, account=account, membership=membership)
+
+
+def get_auth_context(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AuthContext:
+    return _get_auth_context(credentials, db, allow_incomplete_setup=False)
+
+
+def get_auth_context_allow_incomplete_setup(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AuthContext:
+    return _get_auth_context(credentials, db, allow_incomplete_setup=True)
 
 
 def get_current_user(auth_context: AuthContext = Depends(get_auth_context)) -> User:

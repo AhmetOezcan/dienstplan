@@ -11,20 +11,15 @@ const weekdays = [
   'Sonntag',
 ]
 
-const timeSlots = [
-  '08:00',
-  '09:00',
-  '10:00',
-  '11:00',
-  '12:00',
-  '13:00',
-  '14:00',
-  '15:00',
-  '16:00',
-  '17:00',
-]
+function createHourlyTimeLabels(startHour, endHour) {
+  return Array.from({ length: endHour - startHour + 1 }, (_, index) => {
+    const hour = startHour + index
+    return `${String(hour).padStart(2, '0')}:00`
+  })
+}
 
-const timeOptions = [...timeSlots, '18:00']
+const timeSlots = createHourlyTimeLabels(6, 22)
+const timeOptions = createHourlyTimeLabels(6, 23)
 const weekdayNumberByName = Object.fromEntries(weekdays.map((day, index) => [day, index + 1]))
 const timeIndexByValue = Object.fromEntries(timeOptions.map((time, index) => [time, index]))
 const CUSTOMER_COLOR_OPTIONS = [
@@ -81,7 +76,7 @@ const CUSTOMER_COLOR_OPTIONS = [
 ]
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'dienstplan_auth_session'
-const SCHEDULE_ROW_HEIGHT = 72
+const SCHEDULE_ROW_HEIGHT = 36
 
 function createEmptyAuthSession() {
   return {
@@ -149,6 +144,14 @@ function createInitialLoginForm() {
   }
 }
 
+function createInitialSetupForm(fullName = '') {
+  return {
+    fullName: fullName ?? '',
+    newPassword: '',
+    confirmPassword: '',
+  }
+}
+
 function createInitialEmployeeForm() {
   return {
     firstName: '',
@@ -190,6 +193,54 @@ function formatIsoDate(date) {
   const day = String(date.getUTCDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+function getCurrentCalendarWeekState() {
+  const today = new Date()
+  const utcDate = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))
+  const isoDayNumber = utcDate.getUTCDay() || 7
+
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - isoDayNumber)
+
+  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1))
+  const dayOfYear = Math.floor((utcDate - yearStart) / 86400000) + 1
+
+  return {
+    year: utcDate.getUTCFullYear(),
+    calendarWeek: Math.ceil(dayOfYear / 7),
+  }
+}
+
+function formatCurrentDateLabel(date) {
+  return new Intl.DateTimeFormat('de-AT', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(date)
+}
+
+function getGreetingName(name) {
+  if (typeof name !== 'string') {
+    return ''
+  }
+
+  const trimmedName = name.trim()
+
+  if (!trimmedName) {
+    return ''
+  }
+
+  return trimmedName.split(/\s+/)[0] ?? trimmedName
+}
+
+const INITIAL_CALENDAR_STATE = getCurrentCalendarWeekState()
+const DASHBOARD_MENU_ITEMS = [
+  'Header',
+  'Kunden',
+  'Mitarbeiter',
+  'Drucken',
+  'Dienstplan',
+  'Einstellungen',
+]
 
 function getStartDateOfIsoWeek(year, calendarWeek) {
   if (!Number.isInteger(year) || !Number.isInteger(calendarWeek) || calendarWeek < 1 || calendarWeek > 53) {
@@ -353,19 +404,24 @@ function App() {
   const initialAuthSession = getStoredAuthSession()
   const [authSession, setAuthSession] = useState(initialAuthSession)
   const [loginForm, setLoginForm] = useState(createInitialLoginForm)
+  const [setupForm, setSetupForm] = useState(() =>
+    createInitialSetupForm(initialAuthSession.user?.full_name ?? ''),
+  )
   const [employees, setEmployees] = useState([])
   const [customers, setCustomers] = useState([])
   const [scheduleEntries, setScheduleEntries] = useState([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
   const [isEmployeeFormOpen, setIsEmployeeFormOpen] = useState(false)
   const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
+  const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false)
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
-  const [year, setYear] = useState(2026)
-  const [calendarWeek, setCalendarWeek] = useState(14)
+  const [year, setYear] = useState(INITIAL_CALENDAR_STATE.year)
+  const [calendarWeek, setCalendarWeek] = useState(INITIAL_CALENDAR_STATE.calendarWeek)
   const [isLoading, setIsLoading] = useState(Boolean(initialAuthSession.accessToken))
   const [loadError, setLoadError] = useState('')
   const [authError, setAuthError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [isCompletingSetup, setIsCompletingSetup] = useState(false)
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
@@ -380,6 +436,13 @@ function App() {
   const currentAccount = authSession.account
   const currentMembershipRole = authSession.membershipRole
   const isAuthenticated = Boolean(authToken && currentUser)
+  const requiresInitialSetup = Boolean(authToken && currentUser?.must_complete_setup)
+  const currentUserDisplayName =
+    typeof currentUser?.full_name === 'string' && currentUser.full_name.trim()
+      ? currentUser.full_name.trim()
+      : currentUser?.email ?? ''
+  const greetingName = getGreetingName(currentUserDisplayName) || 'zurück'
+  const currentDateLabel = formatCurrentDateLabel(new Date())
 
   useEffect(() => {
     resizeStateRef.current = resizeState
@@ -392,12 +455,14 @@ function App() {
   }, [selectedEmployeeId, year, calendarWeek])
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || requiresInitialSetup) {
       setEmployees([])
       setCustomers([])
       setScheduleEntries([])
       setSelectedEmployeeId(null)
       setIsEmployeeFormOpen(false)
+      setIsCustomerFormOpen(false)
+      setLoadError('')
       setIsLoading(false)
       return
     }
@@ -453,6 +518,7 @@ function App() {
           setScheduleEntries([])
           setSelectedEmployeeId(null)
           setIsEmployeeFormOpen(false)
+          setIsCustomerFormOpen(false)
           setLoadError('')
           setAuthError('Sitzung abgelaufen. Bitte erneut anmelden.')
           return
@@ -471,7 +537,7 @@ function App() {
     return () => {
       abortController.abort()
     }
-  }, [authToken, isAuthenticated])
+  }, [authToken, isAuthenticated, requiresInitialSetup])
 
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
@@ -521,20 +587,26 @@ function App() {
     }
   }
 
+  const scheduledAssignmentsCount = scheduleEntriesForCurrentView.length
+  const dashboardWeekLabel = `KW ${calendarWeek}/${year}`
+
   const resetAuthenticatedApp = (message = '') => {
     clearStoredAuthSession()
     setAuthSession(createEmptyAuthSession())
+    setSetupForm(createInitialSetupForm())
     setEmployees([])
     setCustomers([])
     setScheduleEntries([])
     setSelectedEmployeeId(null)
     setIsEmployeeFormOpen(false)
+    setIsCustomerFormOpen(false)
     setDraggedCustomerId(null)
     setActiveDropCellKey('')
     setResizeState(null)
     setLoadError('')
     setAuthError(message)
     setIsLoading(false)
+    setIsCompletingSetup(false)
   }
 
   const resetEmployeeForm = () => {
@@ -544,6 +616,7 @@ function App() {
 
   const resetCustomerForm = () => {
     setCustomerForm(createInitialCustomerForm())
+    setIsCustomerFormOpen(false)
   }
 
   const handleLoginSubmit = async (event) => {
@@ -574,6 +647,7 @@ function App() {
 
       persistAuthSession(nextSession)
       setAuthSession(nextSession)
+      setSetupForm(createInitialSetupForm(loginResponse.user.full_name ?? ''))
       setLoginForm({
         email: loginResponse.user.email,
         password: '',
@@ -583,6 +657,66 @@ function App() {
       setAuthError(error.message || 'Anmeldung fehlgeschlagen.')
     } finally {
       setIsLoggingIn(false)
+    }
+  }
+
+  const handleCompleteSetupSubmit = async (event) => {
+    event.preventDefault()
+
+    const fullName = setupForm.fullName.trim()
+    const newPassword = setupForm.newPassword
+    const confirmPassword = setupForm.confirmPassword
+
+    if (!authToken || !currentUser || isCompletingSetup) {
+      return
+    }
+
+    if (!fullName) {
+      setAuthError('Bitte gib deinen Namen ein.')
+      return
+    }
+
+    if (newPassword.length < 8) {
+      setAuthError('Das neue Passwort muss mindestens 8 Zeichen lang sein.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setAuthError('Die neuen Passwörter stimmen nicht überein.')
+      return
+    }
+
+    setIsCompletingSetup(true)
+    setAuthError('')
+
+    try {
+      const setupResponse = await apiRequest('/auth/complete-setup', {
+        method: 'POST',
+        accessToken: authToken,
+        body: JSON.stringify({
+          full_name: fullName,
+          new_password: newPassword,
+        }),
+      })
+
+      const nextSession = {
+        ...authSession,
+        user: setupResponse.user,
+      }
+
+      persistAuthSession(nextSession)
+      setAuthSession(nextSession)
+      setSetupForm(createInitialSetupForm(setupResponse.user.full_name ?? ''))
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setAuthError(error.message || 'Erstlogin konnte nicht abgeschlossen werden.')
+    } finally {
+      setIsCompletingSetup(false)
     }
   }
 
@@ -1044,304 +1178,452 @@ function App() {
     )
   }
 
-  return (
-    <main className="app">
-      <header className="page-header page-header-row">
-        <div>
-          <p className="eyebrow">Putzfirma</p>
-          <h1>Dienstplan Software</h1>
-        </div>
-        <div className="header-actions">
-          <div className="session-pill">
-            <span className="session-label">Angemeldet</span>
+  if (requiresInitialSetup) {
+    return (
+      <main className="app auth-app">
+        <header className="page-header page-header-row">
+          <div>
+            <p className="eyebrow">Putzfirma</p>
+            <h1>Dienstplan Software</h1>
+          </div>
+          <button type="button" className="secondary-button header-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </header>
+        {authError ? <p className="status-message status-error">{authError}</p> : null}
+        <section className="panel auth-panel">
+          <div className="auth-panel-header">
+            <h2>Erstlogin abschließen</h2>
+            <p className="panel-note">
+              Bevor du den Dienstplan nutzt, hinterlege deinen Namen und setze dein persönliches
+              Passwort. Dieser Schritt erscheint nur einmal.
+            </p>
+          </div>
+          <div className="session-pill auth-session-pill">
+            <span className="session-label">Benutzerkonto</span>
             <strong>{currentUser.email}</strong>
             {currentAccount ? (
               <span className="session-meta">Account: {currentAccount.name}</span>
             ) : null}
             <span className="session-meta">Rolle: {currentMembershipRole}</span>
           </div>
-          <button type="button" className="secondary-button header-button" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
-      </header>
-      {isLoading ? <p className="status-message">Daten werden geladen...</p> : null}
-      {loadError ? <p className="status-message status-error">{loadError}</p> : null}
-
-      <section className="panel employee-panel" aria-label="Mitarbeiter">
-        <div className="section-header">
-          <div>
-            <h2>Mitarbeiter</h2>
-          </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Mitarbeiter erstellen"
-            disabled={isLoading}
-            onClick={() => setIsEmployeeFormOpen(true)}
-          >
-            +
-          </button>
-        </div>
-        <div className="employee-bar">
-          {employees.length > 0 ? (
-            employees.map((employee) => (
-              <button
-                key={employee.id}
-                type="button"
-                className={`employee-button${
-                  selectedEmployeeId === employee.id ? ' employee-button-active' : ''
-                }`}
-                aria-pressed={selectedEmployeeId === employee.id}
-                onClick={() => setSelectedEmployeeId(employee.id)}
-              >
-                {getEmployeeDisplayName(employee)}
-              </button>
-            ))
-          ) : (
-            <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
-          )}
-        </div>
-        {isEmployeeFormOpen ? (
-          <form className="form-card" onSubmit={handleEmployeeSubmit}>
-            <div className="form-grid">
-              <div className="form-field">
-                <label htmlFor="employee-phone">Telefon</label>
-                <input
-                  id="employee-phone"
-                  type="text"
-                  value={employeeForm.phone}
-                  onChange={(event) =>
-                    setEmployeeForm((currentForm) => ({
-                      ...currentForm,
-                      phone: event.target.value,
-                    }))
-                  }
-                  placeholder="+43 ..."
-                />
-              </div>
-              <div className="form-field">
-                <label htmlFor="employee-first-name">Vorname</label>
-                <input
-                  id="employee-first-name"
-                  type="text"
-                  value={employeeForm.firstName}
-                  onChange={(event) =>
-                    setEmployeeForm((currentForm) => ({
-                      ...currentForm,
-                      firstName: event.target.value,
-                    }))
-                  }
-                  placeholder="Ahmet"
-                  required
-                />
-              </div>
-              <div className="form-field">
-                <label htmlFor="employee-last-name">Nachname</label>
-                <input
-                  id="employee-last-name"
-                  type="text"
-                  value={employeeForm.lastName}
-                  onChange={(event) =>
-                    setEmployeeForm((currentForm) => ({
-                      ...currentForm,
-                      lastName: event.target.value,
-                    }))
-                  }
-                  placeholder="Özcan"
-                />
-              </div>
-            </div>
+          <form className="auth-form" onSubmit={handleCompleteSetupSubmit}>
             <div className="form-field">
-              <label htmlFor="employee-notes">Notizen</label>
-              <textarea
-                id="employee-notes"
-                value={employeeForm.notes}
+              <label htmlFor="setup-full-name">Name</label>
+              <input
+                id="setup-full-name"
+                type="text"
+                value={setupForm.fullName}
                 onChange={(event) =>
-                  setEmployeeForm((currentForm) => ({
+                  setSetupForm((currentForm) => ({
                     ...currentForm,
-                    notes: event.target.value,
+                    fullName: event.target.value,
                   }))
                 }
-                placeholder="Interne Hinweise"
+                placeholder="Vor- und Nachname"
+                autoComplete="name"
+                required
               />
             </div>
-            <p className="form-hint">
-              Der Mitarbeiter gehört automatisch zu deinem Account.
-            </p>
-            <div className="form-actions">
+            <div className="form-field">
+              <label htmlFor="setup-new-password">Neues Passwort</label>
+              <input
+                id="setup-new-password"
+                type="password"
+                value={setupForm.newPassword}
+                onChange={(event) =>
+                  setSetupForm((currentForm) => ({
+                    ...currentForm,
+                    newPassword: event.target.value,
+                  }))
+                }
+                placeholder="Mindestens 8 Zeichen"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="setup-confirm-password">Neues Passwort wiederholen</label>
+              <input
+                id="setup-confirm-password"
+                type="password"
+                value={setupForm.confirmPassword}
+                onChange={(event) =>
+                  setSetupForm((currentForm) => ({
+                    ...currentForm,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+                placeholder="Passwort wiederholen"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <div className="form-actions auth-actions">
               <button
                 type="submit"
                 className="action-button form-button"
-                disabled={isSavingEmployee}
+                disabled={isCompletingSetup}
               >
-                {isSavingEmployee ? 'Speichert...' : 'Speichern'}
+                {isCompletingSetup ? 'Speichert...' : 'Erstlogin abschließen'}
               </button>
               <button
                 type="button"
-                className="secondary-button form-button"
-                disabled={isSavingEmployee}
-                onClick={resetEmployeeForm}
+                className="secondary-button"
+                onClick={handleLogout}
+                disabled={isCompletingSetup}
               >
-                Abbrechen
+                Logout
               </button>
             </div>
           </form>
-        ) : null}
-      </section>
+        </section>
+      </main>
+    )
+  }
 
-      <section className="panel controls-panel" aria-label="Planungsparameter">
-        <div className="control-group">
-          <label htmlFor="year">Jahr</label>
-          <input
-            id="year"
-            type="number"
-            value={year}
-            onChange={(event) => setYear(Number(event.target.value) || 0)}
-          />
+  return (
+    <main className="app dashboard-app">
+      <section className="dashboard-shell">
+        <div className="dashboard-menubar" aria-label="Menü">
+          {DASHBOARD_MENU_ITEMS.map((item) => (
+            <button key={item} type="button" className="dashboard-menu-item">
+              <span>{item}</span>
+              <span className="dashboard-menu-caret" aria-hidden="true">
+                ▾
+              </span>
+            </button>
+          ))}
         </div>
-        <div className="control-group">
-          <label htmlFor="calendar-week">Kalenderwoche</label>
-          <input
-            id="calendar-week"
-            type="number"
-            value={calendarWeek}
-            onChange={(event) => setCalendarWeek(Number(event.target.value) || 0)}
-          />
-        </div>
-      </section>
 
-      <section className="content">
-        <div className="panel schedule-panel">
-          <div className="schedule-header">
-            <p className="schedule-employee-name">{selectedEmployeeLabel}</p>
-            {scheduleDateRangeLabel ? (
-              <p className="schedule-date-range">{scheduleDateRangeLabel}</p>
-            ) : (
-              <span className="schedule-date-range-placeholder" aria-hidden="true" />
-            )}
-            <span className="schedule-header-spacer" aria-hidden="true" />
+        <section className="dashboard-intro">
+          <div className="dashboard-intro-row">
+            <div>
+              <h1>Hallo, {greetingName}!</h1>
+              <p className="dashboard-date">{currentDateLabel}</p>
+            </div>
+            <div className="dashboard-user-actions">
+              <span className="dashboard-user-label">{currentUserDisplayName}</span>
+              <button type="button" className="dashboard-logout" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
           </div>
-          <div className="table-wrapper">
-            <table className="schedule-table">
-              <thead>
-                <tr>
-                  <th>Uhrzeit</th>
-                  {weekdays.map((day) => (
-                    <th key={day}>{day}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {timeSlots.map((time) => (
-                  <tr key={time}>
-                    <th scope="row" className="time-cell">
-                      {time}
-                    </th>
-                    {weekdays.map((day) => {
-                      const cellKey = getCellKey(day, time)
+        </section>
 
-                      if (coveredScheduleCellKeys.has(cellKey)) {
-                        return null
+        {isLoading ? <p className="status-message">Daten werden geladen...</p> : null}
+        {loadError ? <p className="status-message status-error">{loadError}</p> : null}
+
+        <section className="dashboard-widget-grid">
+          <section
+            id="mitarbeiter-widget"
+            className="panel dashboard-widget employee-widget"
+            aria-label="Mitarbeiter"
+          >
+            <div className="widget-topline">
+              <div>
+                <h2>Mitarbeiter</h2>
+                <p className="widget-note">Bitte einen Mitarbeiter für den Plan auswählen.</p>
+              </div>
+              <div className="widget-topline-actions">
+                <span className="widget-count-pill">{String(employees.length).padStart(2, '0')}</span>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Mitarbeiter erstellen"
+                  disabled={isLoading}
+                  onClick={() => setIsEmployeeFormOpen(true)}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="employee-bar">
+              {employees.length > 0 ? (
+                employees.map((employee) => (
+                  <button
+                    key={employee.id}
+                    type="button"
+                    className={`employee-button${
+                      selectedEmployeeId === employee.id ? ' employee-button-active' : ''
+                    }`}
+                    aria-pressed={selectedEmployeeId === employee.id}
+                    onClick={() => setSelectedEmployeeId(employee.id)}
+                  >
+                    {getEmployeeDisplayName(employee)}
+                  </button>
+                ))
+              ) : (
+                <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
+              )}
+            </div>
+
+            {isEmployeeFormOpen ? (
+              <form className="form-card" onSubmit={handleEmployeeSubmit}>
+                <div className="form-grid">
+                  <div className="form-field">
+                    <label htmlFor="employee-phone">Telefon</label>
+                    <input
+                      id="employee-phone"
+                      type="text"
+                      value={employeeForm.phone}
+                      onChange={(event) =>
+                        setEmployeeForm((currentForm) => ({
+                          ...currentForm,
+                          phone: event.target.value,
+                        }))
                       }
+                      placeholder="+43 ..."
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="employee-first-name">Vorname</label>
+                    <input
+                      id="employee-first-name"
+                      type="text"
+                      value={employeeForm.firstName}
+                      onChange={(event) =>
+                        setEmployeeForm((currentForm) => ({
+                          ...currentForm,
+                          firstName: event.target.value,
+                        }))
+                      }
+                      placeholder="Ahmet"
+                      required
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="employee-last-name">Nachname</label>
+                    <input
+                      id="employee-last-name"
+                      type="text"
+                      value={employeeForm.lastName}
+                      onChange={(event) =>
+                        setEmployeeForm((currentForm) => ({
+                          ...currentForm,
+                          lastName: event.target.value,
+                        }))
+                      }
+                      placeholder="Özcan"
+                    />
+                  </div>
+                </div>
+                <div className="form-field">
+                  <label htmlFor="employee-notes">Notizen</label>
+                  <textarea
+                    id="employee-notes"
+                    value={employeeForm.notes}
+                    onChange={(event) =>
+                      setEmployeeForm((currentForm) => ({
+                        ...currentForm,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Interne Hinweise"
+                  />
+                </div>
+                <div className="form-actions">
+                  <button
+                    type="submit"
+                    className="action-button form-button"
+                    disabled={isSavingEmployee}
+                  >
+                    {isSavingEmployee ? 'Speichert...' : 'Speichern'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button form-button"
+                    disabled={isSavingEmployee}
+                    onClick={resetEmployeeForm}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </section>
 
-                      const entry = scheduleEntriesByStartCell.get(cellKey)
+          <section
+            id="dienstplan-widget"
+            className="panel dashboard-widget schedule-widget"
+            aria-label="Dienstplan"
+          >
+            <div className="widget-topline">
+              <div>
+                <h2>Dienstplan</h2>
+                <p className="widget-note">{scheduleDateRangeLabel || 'Bitte Kalenderwoche wählen.'}</p>
+              </div>
+              <span className="widget-count-pill widget-count-pill-accent">
+                {String(scheduledAssignmentsCount).padStart(2, '0')}
+              </span>
+            </div>
 
-                      if (entry) {
-                        const customer = customersById[entry.customer_id]
-                        const displayEndTime =
-                          resizeState?.entryId === entry.id
-                            ? resizeState.previewEndTime
-                            : getScheduleEntryEndTime(entry)
-                        const rowSpan = Math.max(
-                          getTimeIndex(displayEndTime) -
-                            getTimeIndex(getScheduleEntryStartTime(entry)),
-                          1,
-                        )
-                        const isResizingEntry = resizeState?.entryId === entry.id
+            <div className="schedule-meta-row">
+              <div className="schedule-meta-chip">
+                <span>Mitarbeiter</span>
+                <strong>{selectedEmployeeLabel}</strong>
+              </div>
+              <div className="schedule-meta-chip">
+                <span>Woche</span>
+                <strong>{dashboardWeekLabel}</strong>
+              </div>
+            </div>
+
+            <div className="planner-toolbar">
+              <div className="control-group">
+                <label htmlFor="year">Jahr</label>
+                <input
+                  id="year"
+                  type="number"
+                  value={year}
+                  onChange={(event) => setYear(Number(event.target.value) || 0)}
+                />
+              </div>
+              <div className="control-group">
+                <label htmlFor="calendar-week">Kalenderwoche</label>
+                <input
+                  id="calendar-week"
+                  type="number"
+                  value={calendarWeek}
+                  onChange={(event) => setCalendarWeek(Number(event.target.value) || 0)}
+                />
+              </div>
+            </div>
+
+            <div className="table-wrapper schedule-table-wrapper">
+              <table className="schedule-table">
+                <thead>
+                  <tr>
+                    <th>Uhrzeit</th>
+                    {weekdays.map((day) => (
+                      <th key={day}>{day}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {timeSlots.map((time) => (
+                    <tr key={time}>
+                      <th scope="row" className="time-cell">
+                        {time}
+                      </th>
+                      {weekdays.map((day) => {
+                        const cellKey = getCellKey(day, time)
+
+                        if (coveredScheduleCellKeys.has(cellKey)) {
+                          return null
+                        }
+
+                        const entry = scheduleEntriesByStartCell.get(cellKey)
+
+                        if (entry) {
+                          const customer = customersById[entry.customer_id]
+                          const displayEndTime =
+                            resizeState?.entryId === entry.id
+                              ? resizeState.previewEndTime
+                              : getScheduleEntryEndTime(entry)
+                          const rowSpan = Math.max(
+                            getTimeIndex(displayEndTime) -
+                              getTimeIndex(getScheduleEntryStartTime(entry)),
+                            1,
+                          )
+                          const isResizingEntry = resizeState?.entryId === entry.id
+
+                          return (
+                            <td
+                              key={`${time}-${day}`}
+                              rowSpan={rowSpan}
+                              aria-label={`${day} ${time}`}
+                              className="schedule-entry-cell"
+                            >
+                              <article
+                                className={`schedule-entry-card${
+                                  isResizingEntry ? ' schedule-entry-card-resizing' : ''
+                                }`}
+                                title={`${customer?.name ?? `Kunde #${entry.customer_id}`} bis ${displayEndTime}`}
+                                style={{
+                                  backgroundColor: customer?.color ?? '#475569',
+                                  minHeight: `calc(var(--schedule-row-height) * ${rowSpan} - 2px)`,
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  className="schedule-entry-delete"
+                                  aria-label="Einsatz entfernen"
+                                  disabled={isSavingSchedule}
+                                  onClick={() => deleteScheduleEntry(entry.id)}
+                                >
+                                  ×
+                                </button>
+                                <span className="schedule-entry-name">
+                                  {customer?.name ?? `Kunde #${entry.customer_id}`}
+                                </span>
+                                <span className="schedule-entry-time">
+                                  {getScheduleEntryStartTime(entry)} - {displayEndTime}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="schedule-entry-resize"
+                                  aria-label="Einsatzdauer anpassen"
+                                  onMouseDown={(event) => handleResizeStart(entry, event)}
+                                >
+                                  ⌄
+                                </button>
+                              </article>
+                            </td>
+                          )
+                        }
+
+                        const isDropTarget = activeDropCellKey === cellKey
 
                         return (
                           <td
                             key={`${time}-${day}`}
-                            rowSpan={rowSpan}
                             aria-label={`${day} ${time}`}
-                            className="schedule-entry-cell"
+                            className={`schedule-drop-zone${
+                              isDropTarget ? ' schedule-drop-zone-active' : ''
+                            }`}
+                            onDragOver={(event) => handleScheduleCellDragOver(day, time, event)}
+                            onDrop={(event) => handleScheduleCellDrop(day, time, event)}
+                            onDragLeave={() => handleScheduleCellDragLeave(day, time)}
                           >
-                            <article
-                              className={`schedule-entry-card${
-                                isResizingEntry ? ' schedule-entry-card-resizing' : ''
-                              }`}
-                              title={`${customer?.name ?? `Kunde #${entry.customer_id}`} bis ${displayEndTime}`}
-                              style={{
-                                backgroundColor: customer?.color ?? '#475569',
-                                minHeight: `calc(var(--schedule-row-height) * ${rowSpan} - 2px)`,
-                              }}
-                            >
-                              <button
-                                type="button"
-                                className="schedule-entry-delete"
-                                aria-label="Einsatz entfernen"
-                                disabled={isSavingSchedule}
-                                onClick={() => deleteScheduleEntry(entry.id)}
-                              >
-                                ×
-                              </button>
-                              <span className="schedule-entry-name">
-                                {customer?.name ?? `Kunde #${entry.customer_id}`}
-                              </span>
-                              <span className="schedule-entry-time">
-                                {getScheduleEntryStartTime(entry)} - {displayEndTime}
-                              </span>
-                              <button
-                                type="button"
-                                className="schedule-entry-resize"
-                                aria-label="Einsatzdauer anpassen"
-                                onMouseDown={(event) => handleResizeStart(entry, event)}
-                              >
-                                ⌄
-                              </button>
-                            </article>
+                            <div className="schedule-drop-cell">
+                              {draggedCustomerId !== null ? 'Hier ablegen' : ''}
+                            </div>
                           </td>
                         )
-                      }
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-                      const isDropTarget = activeDropCellKey === cellKey
-
-                      return (
-                        <td
-                          key={`${time}-${day}`}
-                          aria-label={`${day} ${time}`}
-                          className={`schedule-drop-zone${
-                            isDropTarget ? ' schedule-drop-zone-active' : ''
-                          }`}
-                          onDragOver={(event) => handleScheduleCellDragOver(day, time, event)}
-                          onDrop={(event) => handleScheduleCellDrop(day, time, event)}
-                          onDragLeave={() => handleScheduleCellDragLeave(day, time)}
-                        >
-                          <div className="schedule-drop-cell">
-                            {draggedCustomerId !== null ? 'Hier ablegen' : ''}
-                          </div>
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <aside className="sidebar">
-          <section className="panel sidebar-panel">
-            <div className="section-header section-header-stack">
+          <section
+            id="kunden-widget"
+            className="panel dashboard-widget customer-widget"
+            aria-label="Kunden"
+          >
+            <div className="widget-topline">
               <div>
-                <h2>Offene Kunden</h2>
-                <p className="panel-note">
-                  Bereits eingeplante Kunden verschwinden für diese Woche und diesen Mitarbeiter aus
-                  der Liste.
-                </p>
+                <h2>Kunden</h2>
+                <p className="widget-note">Offene Kunden für {dashboardWeekLabel}.</p>
+              </div>
+              <div className="widget-topline-actions">
+                <span className="widget-count-pill">{String(availableCustomers.length).padStart(2, '0')}</span>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Kundenformular öffnen"
+                  disabled={isSavingCustomer}
+                  onClick={() => setIsCustomerFormOpen((currentValue) => !currentValue)}
+                >
+                  {isCustomerFormOpen ? '−' : '+'}
+                </button>
               </div>
             </div>
+
             <div className="customer-list">
               {availableCustomers.length > 0 ? (
                 availableCustomers.map((customer) => (
@@ -1365,7 +1647,7 @@ function App() {
                 ))
               ) : customers.length > 0 && selectedEmployeeId !== null ? (
                 <p className="empty-state">
-                  Alle Kunden für {selectedEmployeeLabel} in KW {calendarWeek}/{year} sind bereits
+                  Alle Kunden für {selectedEmployeeLabel} in {dashboardWeekLabel} sind bereits
                   eingeplant.
                 </p>
               ) : selectedEmployeeId === null ? (
@@ -1374,79 +1656,75 @@ function App() {
                 <p className="empty-state">Keine Kunden vorhanden.</p>
               )}
             </div>
-          </section>
 
-          <section className="panel sidebar-panel">
-            <div className="section-header">
-              <h2>Kunde erstellen</h2>
-            </div>
-            <form className="form-card form-card-compact" onSubmit={handleCustomerSubmit}>
-              <div className="form-field">
-                <label htmlFor="customer-name">Kundenname</label>
-                <input
-                  id="customer-name"
-                  type="text"
-                  value={customerForm.name}
-                  onChange={(event) =>
-                    setCustomerForm((currentForm) => ({
-                      ...currentForm,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="Reinigung Maier"
-                  required
-                />
-              </div>
-              <div className="form-field">
-                <label htmlFor="customer-address">Adresse</label>
-                <input
-                  id="customer-address"
-                  type="text"
-                  value={customerForm.address}
-                  onChange={(event) =>
-                    setCustomerForm((currentForm) => ({
-                      ...currentForm,
-                      address: event.target.value,
-                    }))
-                  }
-                  placeholder="Wiener Straße 1"
-                />
-              </div>
-              <div className="form-field">
-                <label htmlFor="customer-notes">Notizen</label>
-                <textarea
-                  id="customer-notes"
-                  value={customerForm.notes}
-                  onChange={(event) =>
-                    setCustomerForm((currentForm) => ({
-                      ...currentForm,
-                      notes: event.target.value,
-                    }))
-                  }
-                  placeholder="Zugang, Schlüssel, Besonderheiten"
-                />
-              </div>
-              <div className="form-actions">
-                <button
-                  type="submit"
-                  className="action-button form-button"
-                  disabled={isSavingCustomer}
-                >
-                  {isSavingCustomer ? 'Speichert...' : 'Speichern'}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button form-button"
-                  disabled={isSavingCustomer}
-                  onClick={resetCustomerForm}
-                >
-                  Zurücksetzen
-                </button>
-              </div>
-            </form>
+            {isCustomerFormOpen ? (
+              <form className="form-card" onSubmit={handleCustomerSubmit}>
+                <div className="form-field">
+                  <label htmlFor="customer-name">Kundenname</label>
+                  <input
+                    id="customer-name"
+                    type="text"
+                    value={customerForm.name}
+                    onChange={(event) =>
+                      setCustomerForm((currentForm) => ({
+                        ...currentForm,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Reinigung Maier"
+                    required
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="customer-address">Adresse</label>
+                  <input
+                    id="customer-address"
+                    type="text"
+                    value={customerForm.address}
+                    onChange={(event) =>
+                      setCustomerForm((currentForm) => ({
+                        ...currentForm,
+                        address: event.target.value,
+                      }))
+                    }
+                    placeholder="Wiener Straße 1"
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="customer-notes">Notizen</label>
+                  <textarea
+                    id="customer-notes"
+                    value={customerForm.notes}
+                    onChange={(event) =>
+                      setCustomerForm((currentForm) => ({
+                        ...currentForm,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Zugang, Schlüssel, Besonderheiten"
+                  />
+                </div>
+                <div className="form-actions">
+                  <button
+                    type="submit"
+                    className="action-button form-button"
+                    disabled={isSavingCustomer}
+                  >
+                    {isSavingCustomer ? 'Speichert...' : 'Speichern'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button form-button"
+                    disabled={isSavingCustomer}
+                    onClick={resetCustomerForm}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            ) : null}
           </section>
-
-        </aside>
+        </section>
       </section>
     </main>
   )

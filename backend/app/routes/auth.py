@@ -6,13 +6,22 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.user import (
     AccountRead,
+    CompleteUserSetupRequest,
+    CompleteUserSetupResponse,
     LoginRequest,
     LoginResponse,
     RegisterResponse,
     UserRead,
     UserRegister,
 )
-from app.security import create_access_token, get_single_account_membership_for_user, verify_password
+from app.security import (
+    AuthContext,
+    create_access_token,
+    get_auth_context_allow_incomplete_setup,
+    get_single_account_membership_for_user,
+    hash_password,
+    verify_password,
+)
 from app.services.login_abuse_protection import (
     clear_email_login_rate_limit,
     enforce_login_rate_limit,
@@ -60,4 +69,30 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         user=UserRead.model_validate(user),
         account=AccountRead.model_validate(membership.account),
         membership_role=membership.role,
+    )
+
+
+@router.post("/auth/complete-setup", response_model=CompleteUserSetupResponse)
+def complete_user_setup(
+    payload: CompleteUserSetupRequest,
+    auth_context: AuthContext = Depends(get_auth_context_allow_incomplete_setup),
+    db: Session = Depends(get_db),
+):
+    user = auth_context.user
+
+    if not user.must_complete_setup:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Initial account setup is already complete",
+        )
+
+    user.full_name = payload.full_name
+    user.password_hash = hash_password(payload.new_password)
+    user.must_complete_setup = False
+    db.commit()
+    db.refresh(user)
+
+    return CompleteUserSetupResponse(
+        message="Initial account setup completed",
+        user=UserRead.model_validate(user),
     )
