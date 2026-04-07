@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
+import PlanningWorkspace from './components/PlanningWorkspace'
 
 const weekdays = [
   'Montag',
@@ -76,7 +77,6 @@ const CUSTOMER_COLOR_OPTIONS = [
 ]
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'dienstplan_auth_session'
-const SCHEDULE_ROW_HEIGHT = 36
 
 function createEmptyAuthSession() {
   return {
@@ -392,10 +392,6 @@ function sortScheduleEntries(items) {
   })
 }
 
-function getCellKey(day, time) {
-  return `${day}__${time}`
-}
-
 function getTimeIndex(time) {
   return timeIndexByValue[time] ?? -1
 }
@@ -425,11 +421,6 @@ function App() {
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
-  const [draggedCustomerId, setDraggedCustomerId] = useState(null)
-  const [activeDropCellKey, setActiveDropCellKey] = useState('')
-  const [resizeState, setResizeState] = useState(null)
-  const resizeStateRef = useRef(null)
-  const scheduleEntriesForCurrentViewRef = useRef([])
 
   const authToken = authSession.accessToken
   const currentUser = authSession.user
@@ -443,16 +434,6 @@ function App() {
       : currentUser?.email ?? ''
   const greetingName = getGreetingName(currentUserDisplayName) || 'zurück'
   const currentDateLabel = formatCurrentDateLabel(new Date())
-
-  useEffect(() => {
-    resizeStateRef.current = resizeState
-  }, [resizeState])
-
-  useEffect(() => {
-    setDraggedCustomerId(null)
-    setActiveDropCellKey('')
-    setResizeState(null)
-  }, [selectedEmployeeId, year, calendarWeek])
 
   useEffect(() => {
     if (!isAuthenticated || requiresInitialSetup) {
@@ -561,33 +542,6 @@ function App() {
     selectedEmployeeId === null
       ? customers
       : customers.filter((customer) => !scheduledCustomerIds.has(customer.id))
-  scheduleEntriesForCurrentViewRef.current = scheduleEntriesForCurrentView
-  const scheduleEntriesByStartCell = new Map()
-  const coveredScheduleCellKeys = new Set()
-
-  for (const entry of scheduleEntriesForCurrentView) {
-    const day = getScheduleEntryDay(entry)
-    const startTime = getScheduleEntryStartTime(entry)
-    const endTime =
-      resizeState?.entryId === entry.id ? resizeState.previewEndTime : getScheduleEntryEndTime(entry)
-    const startIndex = getTimeIndex(startTime)
-    const endIndex = getTimeIndex(endTime)
-
-    if (startIndex < 0 || endIndex <= startIndex) {
-      continue
-    }
-
-    scheduleEntriesByStartCell.set(getCellKey(day, startTime), entry)
-
-    for (let slotIndex = startIndex + 1; slotIndex < endIndex; slotIndex += 1) {
-      const coveredTime = timeOptions[slotIndex]
-      if (timeSlots.includes(coveredTime)) {
-        coveredScheduleCellKeys.add(getCellKey(day, coveredTime))
-      }
-    }
-  }
-
-  const scheduledAssignmentsCount = scheduleEntriesForCurrentView.length
   const dashboardWeekLabel = `KW ${calendarWeek}/${year}`
 
   const resetAuthenticatedApp = (message = '') => {
@@ -600,9 +554,6 @@ function App() {
     setSelectedEmployeeId(null)
     setIsEmployeeFormOpen(false)
     setIsCustomerFormOpen(false)
-    setDraggedCustomerId(null)
-    setActiveDropCellKey('')
-    setResizeState(null)
     setLoadError('')
     setAuthError(message)
     setIsLoading(false)
@@ -812,6 +763,13 @@ function App() {
     }
   }
 
+  const handleCustomerFormFieldChange = (field, value) => {
+    setCustomerForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
     const startIndex = getTimeIndex(startTime)
     const endIndex = getTimeIndex(endTime)
@@ -832,7 +790,7 @@ function App() {
     })
   }
 
-  const createScheduleEntryFromDrop = async ({ customerId, dayOfWeek, startTime }) => {
+  const createScheduleEntry = async ({ customerId, dayOfWeek, startTime, endTime }) => {
     if (isSavingSchedule) {
       return
     }
@@ -842,10 +800,7 @@ function App() {
       return
     }
 
-    const startIndex = getTimeIndex(startTime)
-    const defaultEndTime = timeOptions[startIndex + 1]
-
-    if (!Number.isInteger(customerId) || customerId <= 0 || !defaultEndTime) {
+    if (!Number.isInteger(customerId) || customerId <= 0 || !endTime) {
       setLoadError('Dieser Kunde konnte nicht eingeplant werden.')
       return
     }
@@ -855,7 +810,7 @@ function App() {
       return
     }
 
-    if (hasScheduleConflict({ dayOfWeek, startTime, endTime: defaultEndTime })) {
+    if (hasScheduleConflict({ dayOfWeek, startTime, endTime })) {
       setLoadError('Dieses Zeitfenster ist bereits belegt.')
       return
     }
@@ -876,7 +831,7 @@ function App() {
           customer_id: customerId,
           date: scheduleDate,
           start_time: startTime,
-          end_time: defaultEndTime,
+          end_time: endTime,
           notes: null,
         }),
       })
@@ -895,6 +850,93 @@ function App() {
     } finally {
       setIsSavingSchedule(false)
     }
+  }
+
+  const updateScheduleEntry = async (entryId, updates, fallbackMessage) => {
+    if (isSavingSchedule) {
+      return
+    }
+
+    setIsSavingSchedule(true)
+
+    try {
+      const updatedScheduleEntry = await apiRequest(`/schedule_entries/${entryId}`, {
+        method: 'PATCH',
+        accessToken: authToken,
+        body: JSON.stringify(updates),
+      })
+
+      setScheduleEntries((currentEntries) =>
+        sortScheduleEntries(
+          currentEntries.map((entry) => (entry.id === entryId ? updatedScheduleEntry : entry)),
+        ),
+      )
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setLoadError(error.message || fallbackMessage)
+    } finally {
+      setIsSavingSchedule(false)
+    }
+  }
+
+  const moveScheduleEntry = async ({ entryId, dayOfWeek, startTime, endTime }) => {
+    const entry = scheduleEntriesForCurrentView.find((currentEntry) => currentEntry.id === entryId)
+
+    if (!entry) {
+      setLoadError('Dieser Einsatz konnte nicht gefunden werden.')
+      return
+    }
+
+    if (hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId: entryId })) {
+      setLoadError('Dieses Zeitfenster ist bereits belegt.')
+      return
+    }
+
+    const scheduleDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
+    if (!scheduleDate) {
+      setLoadError('Für die ausgewählte Kalenderwoche konnte kein gültiges Datum ermittelt werden.')
+      return
+    }
+
+    await updateScheduleEntry(
+      entryId,
+      {
+        date: scheduleDate,
+        start_time: startTime,
+        end_time: endTime,
+      },
+      'Einsatz konnte nicht verschoben werden.',
+    )
+  }
+
+  const resizeScheduleEntry = async ({ entryId, endTime }) => {
+    const entry = scheduleEntriesForCurrentView.find((currentEntry) => currentEntry.id === entryId)
+
+    if (!entry) {
+      setLoadError('Dieser Einsatz konnte nicht gefunden werden.')
+      return
+    }
+
+    const startTime = getScheduleEntryStartTime(entry)
+    const dayOfWeek = getScheduleEntryDay(entry)
+
+    if (hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId: entryId })) {
+      setLoadError('Dieses Zeitfenster ist bereits belegt.')
+      return
+    }
+
+    await updateScheduleEntry(
+      entryId,
+      {
+        end_time: endTime,
+      },
+      'Dauer konnte nicht aktualisiert werden.',
+    )
   }
 
   const deleteScheduleEntry = async (entryId) => {
@@ -925,193 +967,6 @@ function App() {
       setIsSavingSchedule(false)
     }
   }
-
-  const handleResizeStart = (entry, event) => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    setResizeState({
-      entryId: entry.id,
-      dayOfWeek: getScheduleEntryDay(entry),
-      startTime: getScheduleEntryStartTime(entry),
-      originalEndTime: getScheduleEntryEndTime(entry),
-      previewEndTime: getScheduleEntryEndTime(entry),
-      startClientY: event.clientY,
-    })
-    setLoadError('')
-  }
-
-  const handleCustomerDragStart = (customerId, event) => {
-    if (selectedEmployeeId === null) {
-      event.preventDefault()
-      setLoadError('Bitte zuerst einen Mitarbeiter auswählen.')
-      return
-    }
-
-    setDraggedCustomerId(customerId)
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(customerId))
-    setLoadError('')
-  }
-
-  const handleCustomerDragEnd = () => {
-    setDraggedCustomerId(null)
-    setActiveDropCellKey('')
-  }
-
-  const handleScheduleCellDragOver = (day, time, event) => {
-    if (selectedEmployeeId === null || isSavingSchedule) {
-      return
-    }
-
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    setActiveDropCellKey(getCellKey(day, time))
-  }
-
-  const handleScheduleCellDrop = async (day, time, event) => {
-    event.preventDefault()
-
-    const droppedCustomerId = Number(
-      event.dataTransfer.getData('text/plain') || draggedCustomerId || '',
-    )
-
-    setActiveDropCellKey('')
-    setDraggedCustomerId(null)
-
-    await createScheduleEntryFromDrop({
-      customerId: droppedCustomerId,
-      dayOfWeek: day,
-      startTime: time,
-    })
-  }
-
-  const handleScheduleCellDragLeave = (day, time) => {
-    const leavingCellKey = getCellKey(day, time)
-    setActiveDropCellKey((currentCellKey) =>
-      currentCellKey === leavingCellKey ? '' : currentCellKey,
-    )
-  }
-
-  useEffect(() => {
-    if (!resizeState) {
-      return undefined
-    }
-
-    const getMaximumResizeSpan = (entry) => {
-      const startIndex = getTimeIndex(getScheduleEntryStartTime(entry))
-      if (startIndex < 0) {
-        return 1
-      }
-
-      const nextStartIndex = scheduleEntriesForCurrentViewRef.current
-        .filter(
-          (candidate) =>
-            candidate.id !== entry.id &&
-            getScheduleEntryDay(candidate) === getScheduleEntryDay(entry),
-        )
-        .map((candidate) => getTimeIndex(getScheduleEntryStartTime(candidate)))
-        .filter((candidateIndex) => candidateIndex > startIndex)
-        .sort((left, right) => left - right)[0]
-
-      const maxEndIndex =
-        nextStartIndex === undefined ? timeOptions.length - 1 : nextStartIndex
-
-      return Math.max(maxEndIndex - startIndex, 1)
-    }
-
-    const persistResizedDuration = async (entryId, nextEndTime) => {
-      if (isSavingSchedule) {
-        return
-      }
-
-      setIsSavingSchedule(true)
-
-      try {
-        const updatedScheduleEntry = await apiRequest(`/schedule_entries/${entryId}`, {
-          method: 'PATCH',
-          accessToken: authToken,
-          body: JSON.stringify({
-            end_time: nextEndTime,
-          }),
-        })
-
-        setScheduleEntries((currentEntries) =>
-          sortScheduleEntries(
-            currentEntries.map((entry) => (entry.id === entryId ? updatedScheduleEntry : entry)),
-          ),
-        )
-        setLoadError('')
-      } catch (error) {
-        if (error.status === 401 || error.status === 403) {
-          resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
-          return
-        }
-
-        setLoadError(error.message || 'Dauer konnte nicht aktualisiert werden.')
-      } finally {
-        setIsSavingSchedule(false)
-      }
-    }
-
-    const handleMouseMove = (event) => {
-      const currentResizeState = resizeStateRef.current
-      if (!currentResizeState) {
-        return
-      }
-
-      const entry = scheduleEntriesForCurrentViewRef.current.find(
-        (scheduleEntry) => scheduleEntry.id === currentResizeState.entryId,
-      )
-      if (!entry) {
-        return
-      }
-
-      const startIndex = getTimeIndex(currentResizeState.startTime)
-      const originalEndIndex = getTimeIndex(currentResizeState.originalEndTime)
-      const originalSpan = Math.max(originalEndIndex - startIndex, 1)
-      const deltaRows = Math.round((event.clientY - currentResizeState.startClientY) / SCHEDULE_ROW_HEIGHT)
-      const maxSpan = getMaximumResizeSpan(entry)
-      const nextSpan = Math.min(Math.max(originalSpan + deltaRows, 1), maxSpan)
-      const nextEndTime = timeOptions[startIndex + nextSpan]
-
-      setResizeState((previousResizeState) => {
-        if (!previousResizeState || previousResizeState.previewEndTime === nextEndTime) {
-          return previousResizeState
-        }
-
-        return {
-          ...previousResizeState,
-          previewEndTime: nextEndTime,
-        }
-      })
-    }
-
-    const handleMouseUp = () => {
-      const finalResizeState = resizeStateRef.current
-      setResizeState(null)
-
-      if (
-        !finalResizeState ||
-        finalResizeState.previewEndTime === finalResizeState.originalEndTime
-      ) {
-        return
-      }
-
-      void persistResizedDuration(
-        finalResizeState.entryId,
-        finalResizeState.previewEndTime,
-      )
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [authToken, isSavingSchedule, resizeState])
 
   if (!isAuthenticated) {
     return (
@@ -1444,286 +1299,37 @@ function App() {
             ) : null}
           </section>
 
-          <section
-            id="dienstplan-widget"
-            className="panel dashboard-widget schedule-widget"
-            aria-label="Dienstplan"
-          >
-            <div className="widget-topline">
-              <div>
-                <h2>Dienstplan</h2>
-                <p className="widget-note">{scheduleDateRangeLabel || 'Bitte Kalenderwoche wählen.'}</p>
-              </div>
-              <span className="widget-count-pill widget-count-pill-accent">
-                {String(scheduledAssignmentsCount).padStart(2, '0')}
-              </span>
-            </div>
-
-            <div className="schedule-meta-row">
-              <div className="schedule-meta-chip">
-                <span>Mitarbeiter</span>
-                <strong>{selectedEmployeeLabel}</strong>
-              </div>
-              <div className="schedule-meta-chip">
-                <span>Woche</span>
-                <strong>{dashboardWeekLabel}</strong>
-              </div>
-            </div>
-
-            <div className="planner-toolbar">
-              <div className="control-group">
-                <label htmlFor="year">Jahr</label>
-                <input
-                  id="year"
-                  type="number"
-                  value={year}
-                  onChange={(event) => setYear(Number(event.target.value) || 0)}
-                />
-              </div>
-              <div className="control-group">
-                <label htmlFor="calendar-week">Kalenderwoche</label>
-                <input
-                  id="calendar-week"
-                  type="number"
-                  value={calendarWeek}
-                  onChange={(event) => setCalendarWeek(Number(event.target.value) || 0)}
-                />
-              </div>
-            </div>
-
-            <div className="table-wrapper schedule-table-wrapper">
-              <table className="schedule-table">
-                <thead>
-                  <tr>
-                    <th>Uhrzeit</th>
-                    {weekdays.map((day) => (
-                      <th key={day}>{day}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {timeSlots.map((time) => (
-                    <tr key={time}>
-                      <th scope="row" className="time-cell">
-                        {time}
-                      </th>
-                      {weekdays.map((day) => {
-                        const cellKey = getCellKey(day, time)
-
-                        if (coveredScheduleCellKeys.has(cellKey)) {
-                          return null
-                        }
-
-                        const entry = scheduleEntriesByStartCell.get(cellKey)
-
-                        if (entry) {
-                          const customer = customersById[entry.customer_id]
-                          const displayEndTime =
-                            resizeState?.entryId === entry.id
-                              ? resizeState.previewEndTime
-                              : getScheduleEntryEndTime(entry)
-                          const rowSpan = Math.max(
-                            getTimeIndex(displayEndTime) -
-                              getTimeIndex(getScheduleEntryStartTime(entry)),
-                            1,
-                          )
-                          const isResizingEntry = resizeState?.entryId === entry.id
-
-                          return (
-                            <td
-                              key={`${time}-${day}`}
-                              rowSpan={rowSpan}
-                              aria-label={`${day} ${time}`}
-                              className="schedule-entry-cell"
-                            >
-                              <article
-                                className={`schedule-entry-card${
-                                  isResizingEntry ? ' schedule-entry-card-resizing' : ''
-                                }`}
-                                title={`${customer?.name ?? `Kunde #${entry.customer_id}`} bis ${displayEndTime}`}
-                                style={{
-                                  backgroundColor: customer?.color ?? '#475569',
-                                  minHeight: `calc(var(--schedule-row-height) * ${rowSpan} - 2px)`,
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  className="schedule-entry-delete"
-                                  aria-label="Einsatz entfernen"
-                                  disabled={isSavingSchedule}
-                                  onClick={() => deleteScheduleEntry(entry.id)}
-                                >
-                                  ×
-                                </button>
-                                <span className="schedule-entry-name">
-                                  {customer?.name ?? `Kunde #${entry.customer_id}`}
-                                </span>
-                                <span className="schedule-entry-time">
-                                  {getScheduleEntryStartTime(entry)} - {displayEndTime}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="schedule-entry-resize"
-                                  aria-label="Einsatzdauer anpassen"
-                                  onMouseDown={(event) => handleResizeStart(entry, event)}
-                                >
-                                  ⌄
-                                </button>
-                              </article>
-                            </td>
-                          )
-                        }
-
-                        const isDropTarget = activeDropCellKey === cellKey
-
-                        return (
-                          <td
-                            key={`${time}-${day}`}
-                            aria-label={`${day} ${time}`}
-                            className={`schedule-drop-zone${
-                              isDropTarget ? ' schedule-drop-zone-active' : ''
-                            }`}
-                            onDragOver={(event) => handleScheduleCellDragOver(day, time, event)}
-                            onDrop={(event) => handleScheduleCellDrop(day, time, event)}
-                            onDragLeave={() => handleScheduleCellDragLeave(day, time)}
-                          >
-                            <div className="schedule-drop-cell">
-                              {draggedCustomerId !== null ? 'Hier ablegen' : ''}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section
-            id="kunden-widget"
-            className="panel dashboard-widget customer-widget"
-            aria-label="Kunden"
-          >
-            <div className="widget-topline">
-              <div>
-                <h2>Kunden</h2>
-                <p className="widget-note">Offene Kunden für {dashboardWeekLabel}.</p>
-              </div>
-              <div className="widget-topline-actions">
-                <span className="widget-count-pill">{String(availableCustomers.length).padStart(2, '0')}</span>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="Kundenformular öffnen"
-                  disabled={isSavingCustomer}
-                  onClick={() => setIsCustomerFormOpen((currentValue) => !currentValue)}
-                >
-                  {isCustomerFormOpen ? '−' : '+'}
-                </button>
-              </div>
-            </div>
-
-            <div className="customer-list">
-              {availableCustomers.length > 0 ? (
-                availableCustomers.map((customer) => (
-                  <article
-                    key={customer.id}
-                    className={`customer-card${
-                      draggedCustomerId === customer.id ? ' customer-card-dragging' : ''
-                    }${selectedEmployeeId === null ? ' customer-card-disabled' : ''}`}
-                    style={{ backgroundColor: customer.color }}
-                    draggable={selectedEmployeeId !== null && !isSavingSchedule}
-                    onDragStart={(event) => handleCustomerDragStart(customer.id, event)}
-                    onDragEnd={handleCustomerDragEnd}
-                  >
-                    <div className="customer-card-content">
-                      <span>{customer.name}</span>
-                      {customer.address ? (
-                        <span className="customer-card-meta">{customer.address}</span>
-                      ) : null}
-                    </div>
-                  </article>
-                ))
-              ) : customers.length > 0 && selectedEmployeeId !== null ? (
-                <p className="empty-state">
-                  Alle Kunden für {selectedEmployeeLabel} in {dashboardWeekLabel} sind bereits
-                  eingeplant.
-                </p>
-              ) : selectedEmployeeId === null ? (
-                <p className="empty-state">Wähle zuerst einen Mitarbeiter zum Planen aus.</p>
-              ) : (
-                <p className="empty-state">Keine Kunden vorhanden.</p>
-              )}
-            </div>
-
-            {isCustomerFormOpen ? (
-              <form className="form-card" onSubmit={handleCustomerSubmit}>
-                <div className="form-field">
-                  <label htmlFor="customer-name">Kundenname</label>
-                  <input
-                    id="customer-name"
-                    type="text"
-                    value={customerForm.name}
-                    onChange={(event) =>
-                      setCustomerForm((currentForm) => ({
-                        ...currentForm,
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Reinigung Maier"
-                    required
-                  />
-                </div>
-                <div className="form-field">
-                  <label htmlFor="customer-address">Adresse</label>
-                  <input
-                    id="customer-address"
-                    type="text"
-                    value={customerForm.address}
-                    onChange={(event) =>
-                      setCustomerForm((currentForm) => ({
-                        ...currentForm,
-                        address: event.target.value,
-                      }))
-                    }
-                    placeholder="Wiener Straße 1"
-                  />
-                </div>
-                <div className="form-field">
-                  <label htmlFor="customer-notes">Notizen</label>
-                  <textarea
-                    id="customer-notes"
-                    value={customerForm.notes}
-                    onChange={(event) =>
-                      setCustomerForm((currentForm) => ({
-                        ...currentForm,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Zugang, Schlüssel, Besonderheiten"
-                  />
-                </div>
-                <div className="form-actions">
-                  <button
-                    type="submit"
-                    className="action-button form-button"
-                    disabled={isSavingCustomer}
-                  >
-                    {isSavingCustomer ? 'Speichert...' : 'Speichern'}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button form-button"
-                    disabled={isSavingCustomer}
-                    onClick={resetCustomerForm}
-                  >
-                    Abbrechen
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </section>
+          <PlanningWorkspace
+            key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}`}
+            availableCustomers={availableCustomers}
+            calendarWeek={calendarWeek}
+            customerForm={customerForm}
+            customers={customers}
+            customersById={customersById}
+            dashboardWeekLabel={dashboardWeekLabel}
+            getTimeIndex={getTimeIndex}
+            isCustomerFormOpen={isCustomerFormOpen}
+            isSavingCustomer={isSavingCustomer}
+            isSavingSchedule={isSavingSchedule}
+            onCalendarWeekChange={setCalendarWeek}
+            onCreateScheduleEntry={createScheduleEntry}
+            onCustomerFieldChange={handleCustomerFormFieldChange}
+            onCustomerSubmit={handleCustomerSubmit}
+            onDeleteScheduleEntry={deleteScheduleEntry}
+            onMoveScheduleEntry={moveScheduleEntry}
+            onResetCustomerForm={resetCustomerForm}
+            onResizeScheduleEntry={resizeScheduleEntry}
+            onToggleCustomerForm={setIsCustomerFormOpen}
+            onYearChange={setYear}
+            scheduleDateRangeLabel={scheduleDateRangeLabel}
+            scheduleEntries={scheduleEntriesForCurrentView}
+            selectedEmployeeId={selectedEmployeeId}
+            selectedEmployeeLabel={selectedEmployeeLabel}
+            timeOptions={timeOptions}
+            timeSlots={timeSlots}
+            weekdays={weekdays}
+            year={year}
+          />
         </section>
       </section>
     </main>
