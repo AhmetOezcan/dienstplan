@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import PlanningWorkspace from './components/PlanningWorkspace'
+import WeeklyOverviewWidget from './components/WeeklyOverviewWidget'
 
 const weekdays = [
   'Montag',
@@ -233,14 +234,21 @@ function getGreetingName(name) {
 }
 
 const INITIAL_CALENDAR_STATE = getCurrentCalendarWeekState()
-const DASHBOARD_MENU_ITEMS = [
-  'Header',
-  'Kunden',
-  'Mitarbeiter',
-  'Drucken',
-  'Dienstplan',
-  'Einstellungen',
+const APP_NAME = 'Ordo Cloud'
+const PRIMARY_DASHBOARD_NAV_ITEMS = [
+  { section: 'schedule', label: 'Dienstplan' },
+  { section: 'employees', label: 'Mitarbeiter' },
+  { section: 'customers', label: 'Kunden' },
 ]
+const LEGAL_DROPDOWN_ITEMS = [
+  { section: 'legal-imprint', label: 'Impressum' },
+  { section: 'legal-privacy', label: 'Datenschutz' },
+  { section: 'legal-cookies', label: 'Cookies' },
+]
+
+function isLegalDashboardSection(section) {
+  return LEGAL_DROPDOWN_ITEMS.some((item) => item.section === section)
+}
 
 function getStartDateOfIsoWeek(year, calendarWeek) {
   if (!Number.isInteger(year) || !Number.isInteger(calendarWeek) || calendarWeek < 1 || calendarWeek > 53) {
@@ -396,6 +404,633 @@ function getTimeIndex(time) {
   return timeIndexByValue[time] ?? -1
 }
 
+function getTimeValueInMinutes(timeValue) {
+  if (typeof timeValue !== 'string') {
+    return null
+  }
+
+  const [hoursValue, minutesValue] = timeValue.split(':')
+  const hours = Number.parseInt(hoursValue ?? '', 10)
+  const minutes = Number.parseInt(minutesValue ?? '', 10)
+
+  if (
+    Number.isNaN(hours) ||
+    Number.isNaN(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null
+  }
+
+  return hours * 60 + minutes
+}
+
+function getScheduleEntryDurationHours(entry) {
+  const startMinutes = getTimeValueInMinutes(getScheduleEntryStartTime(entry))
+  const endMinutes = getTimeValueInMinutes(getScheduleEntryEndTime(entry))
+
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+    return 0
+  }
+
+  return (endMinutes - startMinutes) / 60
+}
+
+const HOURS_CHART_BAR_COLORS = [
+  '#ff1a12',
+  '#3198df',
+  '#aacd85',
+  '#ffe390',
+  '#e67be8',
+  '#f4b56a',
+  '#7fc5ef',
+  '#84c2a0',
+]
+
+function formatHourValue(hours) {
+  const normalizedHours = Math.round(hours * 10) / 10
+  return new Intl.NumberFormat('de-AT', {
+    minimumFractionDigits: Number.isInteger(normalizedHours) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(normalizedHours)
+}
+
+function formatHourCount(hours) {
+  return `${formatHourValue(hours)} Std.`
+}
+
+function getHoursChartScale() {
+  const chartMaximum = 40
+  const tickStep = 10
+
+  return {
+    chartMaximum,
+    yAxisTickValues: Array.from({ length: chartMaximum / tickStep + 1 }, (_, index) => index * tickStep)
+      .reverse(),
+  }
+}
+
+function getCompactEmployeeLabel(label) {
+  if (typeof label !== 'string') {
+    return ''
+  }
+
+  const trimmedLabel = label.trim()
+  if (!trimmedLabel) {
+    return ''
+  }
+
+  const firstSegment = trimmedLabel.split(/\s+/)[0] ?? trimmedLabel
+  return firstSegment.length > 7 ? `${firstSegment.slice(0, 6)}…` : firstSegment
+}
+
+function WeeklyHoursWidget({
+  dashboardWeekLabel,
+  employees,
+  scheduleEntries,
+  selectedEmployeeId,
+}) {
+  const hoursByEmployeeId = {}
+  const assignmentsByEmployeeId = {}
+
+  scheduleEntries.forEach((entry) => {
+    const durationHours = getScheduleEntryDurationHours(entry)
+    const employeeId = entry.employee_id
+
+    hoursByEmployeeId[employeeId] = (hoursByEmployeeId[employeeId] ?? 0) + durationHours
+    assignmentsByEmployeeId[employeeId] = (assignmentsByEmployeeId[employeeId] ?? 0) + 1
+  })
+
+  const chartItems = employees
+    .map((employee) => {
+      const totalHours = hoursByEmployeeId[employee.id] ?? 0
+      const assignmentCount = assignmentsByEmployeeId[employee.id] ?? 0
+
+      return {
+        employeeId: employee.id,
+        label: getEmployeeDisplayName(employee),
+        totalHours,
+        assignmentCount,
+      }
+    })
+
+  const totalHours = chartItems.reduce((sum, item) => sum + item.totalHours, 0)
+  const { chartMaximum, yAxisTickValues } = getHoursChartScale()
+  const hasScheduledEntries = scheduleEntries.length > 0
+
+  return (
+    <section
+      id="wochenstunden-widget"
+      className="panel dashboard-widget hours-widget"
+      aria-label="Arbeitsstunden der Woche"
+      style={{
+        '--hours-chart-item-count': String(chartItems.length),
+      }}
+    >
+      <div className="widget-topline">
+        <div>
+          <h2>Wochenstunden</h2>
+          <p className="widget-note">Arbeitsstunden aller Mitarbeiter in {dashboardWeekLabel}.</p>
+        </div>
+        <span className="widget-count-pill widget-count-pill-accent">
+          {formatHourCount(totalHours)}
+        </span>
+      </div>
+
+      {employees.length === 0 ? (
+        <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
+      ) : !hasScheduledEntries ? (
+        <p className="empty-state">Für diese Kalenderwoche sind noch keine Einsätze geplant.</p>
+      ) : (
+        <div className="hours-chart-shell">
+          <span className="hours-chart-axis-title" aria-hidden="true">
+            Std.
+          </span>
+          <div className="hours-chart-layout">
+            <div className="hours-chart-y-axis" aria-hidden="true">
+              {yAxisTickValues.map((tickValue) => (
+                <span key={tickValue}>{formatHourValue(tickValue)}</span>
+              ))}
+            </div>
+
+            <div className="hours-chart-scroll">
+              <div className="hours-chart-stage">
+                <div className="hours-chart-grid-lines" aria-hidden="true">
+                  {yAxisTickValues.map((tickValue) => (
+                    <span key={`grid-${tickValue}`} className="hours-chart-grid-line" />
+                  ))}
+                </div>
+
+                <div
+                  className="hours-chart-bars"
+                  role="list"
+                  aria-label={`Arbeitsstunden in ${dashboardWeekLabel}`}
+                >
+                  {chartItems.map((item, index) => {
+                    const barHeight =
+                      chartMaximum > 0
+                        ? `${Math.min(item.totalHours / chartMaximum, 1) * 100}%`
+                        : '0%'
+                    const barColor =
+                      HOURS_CHART_BAR_COLORS[index % HOURS_CHART_BAR_COLORS.length]
+                    const compactLabel = getCompactEmployeeLabel(item.label)
+                    const assignmentLabel =
+                      item.assignmentCount === 1 ? '1 Einsatz' : `${item.assignmentCount} Einsätze`
+
+                    return (
+                      <article
+                        key={item.employeeId}
+                        className={`hours-chart-item${
+                          selectedEmployeeId === item.employeeId ? ' hours-chart-item-active' : ''
+                        }`}
+                        role="listitem"
+                        aria-label={`${item.label}: ${formatHourCount(item.totalHours)}, ${assignmentLabel}`}
+                        title={`${item.label} · ${formatHourCount(item.totalHours)} · ${assignmentLabel}`}
+                      >
+                        <span className="hours-chart-bar-value">{formatHourValue(item.totalHours)}</span>
+                        <div className="hours-chart-bar-slot" aria-hidden="true">
+                          <div
+                            className="hours-chart-bar-fill"
+                            style={{
+                              height: barHeight,
+                              '--hours-chart-bar-color': barColor,
+                            }}
+                          />
+                        </div>
+                        <strong className="hours-chart-bar-label">{compactLabel}</strong>
+                      </article>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function EmployeeManagementSection({
+  employees,
+  employeeForm,
+  isSavingEmployee,
+  onBackToSchedule,
+  onEmployeeFieldChange,
+  onEmployeeSubmit,
+  onResetEmployeeForm,
+  onSelectEmployee,
+  selectedEmployeeId,
+}) {
+  return (
+    <section className="panel management-panel" aria-label="Mitarbeiter verwalten">
+      <div className="management-panel-header">
+        <div>
+          <p className="eyebrow">Mitarbeiter</p>
+          <h2>Mitarbeiter verwalten</h2>
+          <p className="panel-note">Neue Mitarbeiter werden ausschließlich hier angelegt.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onBackToSchedule}>
+          Zum Dienstplan
+        </button>
+      </div>
+
+      <div className="management-panel-grid">
+        <section className="management-card">
+          <div className="management-card-header">
+            <h3>Bestehende Mitarbeiter</h3>
+            <span className="widget-count-pill">{String(employees.length).padStart(2, '0')}</span>
+          </div>
+
+          <div className="management-list">
+            {employees.length > 0 ? (
+              employees.map((employee) => (
+                <button
+                  key={employee.id}
+                  type="button"
+                  className={`management-list-item${
+                    selectedEmployeeId === employee.id ? ' management-list-item-active' : ''
+                  }`}
+                  onClick={() => onSelectEmployee(employee.id)}
+                >
+                  <strong>{getEmployeeDisplayName(employee)}</strong>
+                  {employee.phone ? (
+                    <span className="management-list-meta">{employee.phone}</span>
+                  ) : null}
+                  {employee.notes ? (
+                    <span className="management-list-meta">{employee.notes}</span>
+                  ) : null}
+                </button>
+              ))
+            ) : (
+              <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="management-card">
+          <div className="management-card-header">
+            <h3>Neuen Mitarbeiter anlegen</h3>
+          </div>
+
+          <form className="management-form" onSubmit={onEmployeeSubmit}>
+            <div className="form-grid">
+              <div className="form-field">
+                <label htmlFor="employee-phone">Telefon</label>
+                <input
+                  id="employee-phone"
+                  type="text"
+                  value={employeeForm.phone}
+                  onChange={(event) => onEmployeeFieldChange('phone', event.target.value)}
+                  placeholder="+43 ..."
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="employee-first-name">Vorname</label>
+                <input
+                  id="employee-first-name"
+                  type="text"
+                  value={employeeForm.firstName}
+                  onChange={(event) => onEmployeeFieldChange('firstName', event.target.value)}
+                  placeholder="Ahmet"
+                  required
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="employee-last-name">Nachname</label>
+                <input
+                  id="employee-last-name"
+                  type="text"
+                  value={employeeForm.lastName}
+                  onChange={(event) => onEmployeeFieldChange('lastName', event.target.value)}
+                  placeholder="Özcan"
+                />
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="employee-notes">Notizen</label>
+              <textarea
+                id="employee-notes"
+                value={employeeForm.notes}
+                onChange={(event) => onEmployeeFieldChange('notes', event.target.value)}
+                placeholder="Interne Hinweise"
+              />
+            </div>
+
+            <div className="form-actions">
+              <button type="submit" className="action-button form-button" disabled={isSavingEmployee}>
+                {isSavingEmployee ? 'Speichert...' : 'Speichern'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button form-button"
+                disabled={isSavingEmployee}
+                onClick={onResetEmployeeForm}
+              >
+                Formular leeren
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </section>
+  )
+}
+
+function CustomerManagementSection({
+  customerForm,
+  customers,
+  isSavingCustomer,
+  onBackToSchedule,
+  onCustomerFieldChange,
+  onCustomerSubmit,
+  onResetCustomerForm,
+}) {
+  return (
+    <section className="panel management-panel" aria-label="Kunden verwalten">
+      <div className="management-panel-header">
+        <div>
+          <p className="eyebrow">Kunden</p>
+          <h2>Kunden verwalten</h2>
+          <p className="panel-note">Neue Kunden werden ausschließlich hier angelegt.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onBackToSchedule}>
+          Zum Dienstplan
+        </button>
+      </div>
+
+      <div className="management-panel-grid">
+        <section className="management-card">
+          <div className="management-card-header">
+            <h3>Bestehende Kunden</h3>
+            <span className="widget-count-pill">{String(customers.length).padStart(2, '0')}</span>
+          </div>
+
+          <div className="management-list">
+            {customers.length > 0 ? (
+              customers.map((customer) => (
+                <article key={customer.id} className="management-list-item management-list-item-static">
+                  <span
+                    className="management-color-dot"
+                    aria-hidden="true"
+                    style={{ backgroundColor: customer.color }}
+                  />
+                  <div className="management-list-content">
+                    <strong>{customer.name}</strong>
+                    {customer.address ? (
+                      <span className="management-list-meta">{customer.address}</span>
+                    ) : null}
+                    {customer.notes ? (
+                      <span className="management-list-meta">{customer.notes}</span>
+                    ) : null}
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p className="empty-state">Keine Kunden vorhanden.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="management-card">
+          <div className="management-card-header">
+            <h3>Neuen Kunden anlegen</h3>
+          </div>
+
+          <form className="management-form" onSubmit={onCustomerSubmit}>
+            <div className="form-field">
+              <label htmlFor="customer-name">Kundenname</label>
+              <input
+                id="customer-name"
+                type="text"
+                value={customerForm.name}
+                onChange={(event) => onCustomerFieldChange('name', event.target.value)}
+                placeholder="Reinigung Maier"
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="customer-address">Adresse</label>
+              <input
+                id="customer-address"
+                type="text"
+                value={customerForm.address}
+                onChange={(event) => onCustomerFieldChange('address', event.target.value)}
+                placeholder="Wiener Straße 1"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="customer-notes">Notizen</label>
+              <textarea
+                id="customer-notes"
+                value={customerForm.notes}
+                onChange={(event) => onCustomerFieldChange('notes', event.target.value)}
+                placeholder="Zugang, Schlüssel, Besonderheiten"
+              />
+            </div>
+            <div className="form-actions">
+              <button type="submit" className="action-button form-button" disabled={isSavingCustomer}>
+                {isSavingCustomer ? 'Speichert...' : 'Speichern'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button form-button"
+                disabled={isSavingCustomer}
+                onClick={onResetCustomerForm}
+              >
+                Formular leeren
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </section>
+  )
+}
+
+function LegalSection({ activeSection, accountName, onBackToSchedule }) {
+  const legalEntityName =
+    typeof accountName === 'string' && accountName.trim()
+      ? accountName.trim()
+      : '[Firmenname ergänzen]'
+
+  const legalPageContentBySection = {
+    'legal-imprint': {
+      title: 'Impressum',
+      intro:
+        'Basismuster für Anbieterkennzeichnung und Offenlegung in Österreich. Alle Platzhalter vor dem Livegang durch echte Unternehmensdaten ersetzen.',
+      cards: [
+        {
+          title: 'Anbieter',
+          lines: [
+            legalEntityName,
+            '[Unternehmensform ergänzen]',
+            '[Straße und Hausnummer]',
+            '[PLZ Ort, Österreich]',
+          ],
+        },
+        {
+          title: 'Kontakt',
+          lines: ['E-Mail: [office@firma.at]', 'Telefon: [+43 ...]', 'Web: https://[domain]'],
+        },
+        {
+          title: 'Unternehmensangaben',
+          lines: [
+            'Firmenbuchnummer: [FN ...]',
+            'Firmenbuchgericht: [Gericht ergänzen]',
+            'UID: [ATU ...]',
+            'Aufsichtsbehörde oder Kammer: [falls einschlägig]',
+          ],
+        },
+        {
+          title: 'Vertretung und Blattlinie',
+          lines: [
+            'Vertretungsbefugte Person: [Geschäftsführung ergänzen]',
+            'Tätigkeitsbereich: Cloud-Software für Dienst- und Einsatzplanung',
+            'Blattlinie: Informationen und Funktionen rund um Ordo Cloud',
+          ],
+        },
+      ],
+      footnote:
+        'Wenn ihr redaktionelle Inhalte oder regelmäßige Newsletter veröffentlicht, sind zusätzliche Offenlegungsangaben zu prüfen.',
+    },
+    'legal-privacy': {
+      title: 'Datenschutz',
+      intro:
+        'Dieses Muster deckt die üblichen DSGVO-Bausteine für die App ab. Es muss an eure echten Prozesse, Dienstleister und Speicherfristen angepasst werden.',
+      cards: [
+        {
+          title: 'Verantwortlicher',
+          lines: [
+            `${legalEntityName} ist Verantwortlicher für die Verarbeitung personenbezogener Daten in Ordo Cloud.`,
+            'Kontakt: [privacy@firma.at] oder [Postanschrift ergänzen]',
+          ],
+        },
+        {
+          title: 'Verarbeitete Daten',
+          bullets: [
+            'Kontodaten wie Name, E-Mail-Adresse und Rollen',
+            'Mitarbeiter-, Kunden- und Einsatzdaten, die in der App erfasst werden',
+            'Technische Protokolle zur Sicherheit, Fehleranalyse und Betriebsstabilität',
+          ],
+        },
+        {
+          title: 'Zwecke und Rechtsgrundlagen',
+          bullets: [
+            'Bereitstellung der App und Vertragsabwicklung',
+            'Organisation von Dienstplanung und Einsatzverwaltung',
+            'Sicherheits- und Missbrauchsprävention sowie gesetzliche Nachweise',
+          ],
+        },
+        {
+          title: 'Empfänger und Speicherfristen',
+          bullets: [
+            'Hosting-, Infrastruktur- und Support-Dienstleister nur im erforderlichen Umfang',
+            'Speicherung solange dies für Vertrag, Betrieb, Nachweis oder gesetzliche Pflichten nötig ist',
+            'Lösch- oder Anonymisierungskonzept für Alt- und Testdaten ergänzen',
+          ],
+        },
+        {
+          title: 'Betroffenenrechte',
+          bullets: [
+            'Auskunft, Berichtigung, Löschung und Einschränkung',
+            'Datenübertragbarkeit und Widerspruch, soweit anwendbar',
+            'Beschwerde bei der Österreichischen Datenschutzbehörde, Barichgasse 40-42, 1030 Wien',
+          ],
+        },
+      ],
+      footnote:
+        'Wenn externe Dienste wie E-Mail, Analytics, Karten, Videos oder Support-Tools eingebunden werden, müssen diese hier konkret genannt werden.',
+    },
+    'legal-cookies': {
+      title: 'Cookies und Endgerätespeicher',
+      intro:
+        'Aktueller Frontend-Stand: Im sichtbaren Code sind keine Analyse- oder Marketing-Cookies eingebunden. Vor Produktion trotzdem das echte Deployment inklusive Dritttools prüfen.',
+      cards: [
+        {
+          title: 'Derzeitiger Stand',
+          bullets: [
+            'Die App speichert die Anmeldung aktuell im Browser-Local-Storage.',
+            'Technisch nicht notwendige Tracking-, Marketing- oder Werbe-Cookies sind im Frontend derzeit nicht hinterlegt.',
+          ],
+        },
+        {
+          title: 'Wann Einwilligung nötig wird',
+          bullets: [
+            'Sobald Analyse-, Marketing- oder Retargeting-Dienste eingebunden werden',
+            'Sobald Drittinhalte wie Karten, Videos, Social Plugins oder reCAPTCHA ohne echte technische Erforderlichkeit eingesetzt werden',
+            'Dann muss die Zustimmung vor Aktivierung eingeholt und der Widerruf leicht möglich sein',
+          ],
+        },
+        {
+          title: 'Was dokumentiert werden sollte',
+          bullets: [
+            'Welche Technologien auf dem Endgerät gespeichert oder ausgelesen werden',
+            'Zu welchem Zweck dies geschieht und wie lange die Daten bestehen bleiben',
+            'Wie Nutzer ihre Auswahl später wieder ändern oder widerrufen können',
+          ],
+        },
+      ],
+      footnote:
+        'AGB oder Nutzungsbedingungen können sinnvoll sein, sind aber nicht automatisch derselbe Pflichtblock wie Impressum oder Datenschutz.',
+    },
+  }
+
+  const pageContent = legalPageContentBySection[activeSection]
+
+  if (!pageContent) {
+    return null
+  }
+
+  return (
+    <section className="dashboard-page-stack">
+      <section className="panel management-panel legal-panel" aria-label={pageContent.title}>
+        <div className="management-panel-header">
+          <div>
+            <p className="eyebrow">Rechtliches</p>
+            <h2>{pageContent.title}</h2>
+            <p className="panel-note">{pageContent.intro}</p>
+          </div>
+          <button type="button" className="secondary-button" onClick={onBackToSchedule}>
+            Zum Dienstplan
+          </button>
+        </div>
+
+        <div className="legal-grid">
+          {pageContent.cards.map((card) => (
+            <section key={card.title} className="management-card legal-card">
+              <div className="management-card-header">
+                <h3>{card.title}</h3>
+              </div>
+
+              {card.lines ? (
+                <div className="legal-copy">
+                  {card.lines.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                </div>
+              ) : null}
+
+              {card.bullets ? (
+                <ul className="legal-list">
+                  {card.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ))}
+        </div>
+
+        <p className="panel-note legal-footnote">{pageContent.footnote}</p>
+      </section>
+    </section>
+  )
+}
+
 function App() {
   const initialAuthSession = getStoredAuthSession()
   const [authSession, setAuthSession] = useState(initialAuthSession)
@@ -406,10 +1041,10 @@ function App() {
   const [employees, setEmployees] = useState([])
   const [customers, setCustomers] = useState([])
   const [scheduleEntries, setScheduleEntries] = useState([])
+  const [activeDashboardSection, setActiveDashboardSection] = useState('schedule')
+  const [isLegalMenuOpen, setIsLegalMenuOpen] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
-  const [isEmployeeFormOpen, setIsEmployeeFormOpen] = useState(false)
   const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
-  const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false)
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
   const [year, setYear] = useState(INITIAL_CALENDAR_STATE.year)
   const [calendarWeek, setCalendarWeek] = useState(INITIAL_CALENDAR_STATE.calendarWeek)
@@ -421,6 +1056,7 @@ function App() {
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
+  const headerMenuRef = useRef(null)
 
   const authToken = authSession.accessToken
   const currentUser = authSession.user
@@ -440,9 +1076,9 @@ function App() {
       setEmployees([])
       setCustomers([])
       setScheduleEntries([])
+      setActiveDashboardSection('schedule')
+      setIsLegalMenuOpen(false)
       setSelectedEmployeeId(null)
-      setIsEmployeeFormOpen(false)
-      setIsCustomerFormOpen(false)
       setLoadError('')
       setIsLoading(false)
       return
@@ -497,9 +1133,9 @@ function App() {
           setEmployees([])
           setCustomers([])
           setScheduleEntries([])
+          setActiveDashboardSection('schedule')
+          setIsLegalMenuOpen(false)
           setSelectedEmployeeId(null)
-          setIsEmployeeFormOpen(false)
-          setIsCustomerFormOpen(false)
           setLoadError('')
           setAuthError('Sitzung abgelaufen. Bitte erneut anmelden.')
           return
@@ -520,6 +1156,32 @@ function App() {
     }
   }, [authToken, isAuthenticated, requiresInitialSetup])
 
+  useEffect(() => {
+    if (!isLegalMenuOpen) {
+      return undefined
+    }
+
+    const handlePointerDown = (event) => {
+      if (!headerMenuRef.current?.contains(event.target)) {
+        setIsLegalMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsLegalMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isLegalMenuOpen])
+
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
   const selectedEmployeeLabel = selectedEmployee
@@ -527,14 +1189,13 @@ function App() {
     : 'Kein Mitarbeiter ausgewählt'
   const scheduleDateRangeLabel = getCalendarWeekDateRangeLabel(year, calendarWeek)
   const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
+  const scheduleEntriesForSelectedWeek = scheduleEntries.filter((entry) =>
+    isIsoDateInCalendarWeek(getScheduleEntryDate(entry), year, calendarWeek),
+  )
   const scheduleEntriesForCurrentView =
     selectedEmployeeId === null
       ? []
-      : scheduleEntries.filter(
-          (entry) =>
-            isIsoDateInCalendarWeek(getScheduleEntryDate(entry), year, calendarWeek) &&
-            entry.employee_id === selectedEmployeeId,
-        )
+      : scheduleEntriesForSelectedWeek.filter((entry) => entry.employee_id === selectedEmployeeId)
   const scheduledCustomerIds = new Set(
     scheduleEntriesForCurrentView.map((entry) => entry.customer_id),
   )
@@ -551,9 +1212,9 @@ function App() {
     setEmployees([])
     setCustomers([])
     setScheduleEntries([])
+    setActiveDashboardSection('schedule')
+    setIsLegalMenuOpen(false)
     setSelectedEmployeeId(null)
-    setIsEmployeeFormOpen(false)
-    setIsCustomerFormOpen(false)
     setLoadError('')
     setAuthError(message)
     setIsLoading(false)
@@ -562,12 +1223,10 @@ function App() {
 
   const resetEmployeeForm = () => {
     setEmployeeForm(createInitialEmployeeForm())
-    setIsEmployeeFormOpen(false)
   }
 
   const resetCustomerForm = () => {
     setCustomerForm(createInitialCustomerForm())
-    setIsCustomerFormOpen(false)
   }
 
   const handleLoginSubmit = async (event) => {
@@ -765,6 +1424,13 @@ function App() {
 
   const handleCustomerFormFieldChange = (field, value) => {
     setCustomerForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
+  const handleEmployeeFormFieldChange = (field, value) => {
+    setEmployeeForm((currentForm) => ({
       ...currentForm,
       [field]: value,
     }))
@@ -968,13 +1634,23 @@ function App() {
     }
   }
 
+  const isScheduleSectionActive = activeDashboardSection === 'schedule'
+  const isEmployeeManagementActive = activeDashboardSection === 'employees'
+  const isCustomerManagementActive = activeDashboardSection === 'customers'
+  const isLegalSectionActive = isLegalDashboardSection(activeDashboardSection)
+
+  const navigateToDashboardSection = (section) => {
+    setActiveDashboardSection(section)
+    setIsLegalMenuOpen(false)
+  }
+
   if (!isAuthenticated) {
     return (
       <main className="app auth-app">
         <header className="page-header">
           <div>
-            <p className="eyebrow">Putzfirma</p>
-            <h1>Dienstplan Software</h1>
+            <p className="eyebrow">{APP_NAME}</p>
+            <h1>Dienstplanung für Teams</h1>
           </div>
         </header>
         {authError ? <p className="status-message status-error">{authError}</p> : null}
@@ -1038,8 +1714,8 @@ function App() {
       <main className="app auth-app">
         <header className="page-header page-header-row">
           <div>
-            <p className="eyebrow">Putzfirma</p>
-            <h1>Dienstplan Software</h1>
+            <p className="eyebrow">{APP_NAME}</p>
+            <h1>Dienstplanung für Teams</h1>
           </div>
           <button type="button" className="secondary-button header-button" onClick={handleLogout}>
             Logout
@@ -1137,19 +1813,128 @@ function App() {
     )
   }
 
+  const employeeSelectionWidget = (
+    <section id="mitarbeiter-widget" className="panel dashboard-widget employee-widget" aria-label="Mitarbeiter">
+      <div className="widget-topline">
+        <div>
+          <h2>Mitarbeiter</h2>
+        </div>
+        <div className="widget-topline-actions">
+          <span className="widget-count-pill">{String(employees.length).padStart(2, '0')}</span>
+        </div>
+      </div>
+
+      <div className="employee-bar">
+        {employees.length > 0 ? (
+          employees.map((employee) => (
+            <button
+              key={employee.id}
+              type="button"
+              className={`employee-button${
+                selectedEmployeeId === employee.id ? ' employee-button-active' : ''
+              }`}
+              aria-pressed={selectedEmployeeId === employee.id}
+              onClick={() => setSelectedEmployeeId(employee.id)}
+            >
+              {getEmployeeDisplayName(employee)}
+            </button>
+          ))
+        ) : (
+          <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
+        )}
+      </div>
+    </section>
+  )
+
   return (
     <main className="app dashboard-app">
       <section className="dashboard-shell">
-        <div className="dashboard-menubar" aria-label="Menü">
-          {DASHBOARD_MENU_ITEMS.map((item) => (
-            <button key={item} type="button" className="dashboard-menu-item">
-              <span>{item}</span>
-              <span className="dashboard-menu-caret" aria-hidden="true">
-                ▾
-              </span>
-            </button>
-          ))}
-        </div>
+        <header className="dashboard-header">
+          <div className="dashboard-brand">
+            <span className="dashboard-brand-kicker">Dienstplanung</span>
+            <strong className="dashboard-brand-name">{APP_NAME}</strong>
+            <span className="dashboard-brand-note">
+              {currentAccount ? `${currentAccount.name} · ${dashboardWeekLabel}` : 'Cloud-Planung für Teams'}
+            </span>
+          </div>
+
+          <div className="dashboard-header-controls">
+            <nav className="dashboard-header-nav" aria-label="Hauptnavigation">
+              {PRIMARY_DASHBOARD_NAV_ITEMS.map((item) => (
+                <button
+                  key={item.section}
+                  type="button"
+                  className={`dashboard-nav-button${
+                    activeDashboardSection === item.section ? ' dashboard-nav-button-active' : ''
+                  }`}
+                  aria-pressed={activeDashboardSection === item.section}
+                  onClick={() => navigateToDashboardSection(item.section)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+
+            <div
+              ref={headerMenuRef}
+              className={`dashboard-legal-menu${isLegalMenuOpen ? ' dashboard-legal-menu-open' : ''}`}
+            >
+              <button
+                type="button"
+                className={`dashboard-legal-trigger${
+                  isLegalSectionActive ? ' dashboard-legal-trigger-active' : ''
+                }`}
+                aria-expanded={isLegalMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setIsLegalMenuOpen((currentValue) => !currentValue)}
+              >
+                <span>Rechtliches</span>
+                <span className="dashboard-menu-caret" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+
+              <div
+                className={`dashboard-legal-dropdown${isLegalMenuOpen ? ' dashboard-legal-dropdown-open' : ''}`}
+                role="menu"
+                aria-label="Rechtliches"
+                aria-hidden={!isLegalMenuOpen}
+              >
+                <p className="dashboard-legal-copy">
+                  Basissatz für Österreich/EU. AGB nur dann ergänzen, wenn ihr sie wirklich nutzt.
+                </p>
+
+                {LEGAL_DROPDOWN_ITEMS.map((item) => (
+                  <button
+                    key={item.section}
+                    type="button"
+                    role="menuitem"
+                    tabIndex={isLegalMenuOpen ? 0 : -1}
+                    className={`dashboard-submenu-item${
+                      activeDashboardSection === item.section ? ' dashboard-submenu-item-active' : ''
+                    }`}
+                    onClick={() => navigateToDashboardSection(item.section)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="dashboard-user-actions">
+              <div className="dashboard-user-meta">
+                <span className="dashboard-user-label">{currentUserDisplayName}</span>
+                <span className="dashboard-user-account">
+                  {currentAccount ? currentAccount.name : 'Aktiver Account'}
+                  {currentMembershipRole ? ` · ${currentMembershipRole}` : ''}
+                </span>
+              </div>
+              <button type="button" className="dashboard-logout" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          </div>
+        </header>
 
         <section className="dashboard-intro">
           <div className="dashboard-intro-row">
@@ -1157,180 +1942,95 @@ function App() {
               <h1>Hallo, {greetingName}!</h1>
               <p className="dashboard-date">{currentDateLabel}</p>
             </div>
-            <div className="dashboard-user-actions">
-              <span className="dashboard-user-label">{currentUserDisplayName}</span>
-              <button type="button" className="dashboard-logout" onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
           </div>
         </section>
 
         {isLoading ? <p className="status-message">Daten werden geladen...</p> : null}
         {loadError ? <p className="status-message status-error">{loadError}</p> : null}
 
-        <section className="dashboard-widget-grid">
-          <section
-            id="mitarbeiter-widget"
-            className="panel dashboard-widget employee-widget"
-            aria-label="Mitarbeiter"
-          >
-            <div className="widget-topline">
-              <div>
-                <h2>Mitarbeiter</h2>
-                <p className="widget-note">Bitte einen Mitarbeiter für den Plan auswählen.</p>
-              </div>
-              <div className="widget-topline-actions">
-                <span className="widget-count-pill">{String(employees.length).padStart(2, '0')}</span>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="Mitarbeiter erstellen"
-                  disabled={isLoading}
-                  onClick={() => setIsEmployeeFormOpen(true)}
-                >
-                  +
-                </button>
-              </div>
-            </div>
+        {isScheduleSectionActive ? (
+          <section className="dashboard-widget-grid">
+            <WeeklyOverviewWidget
+              customersById={customersById}
+              dashboardWeekLabel={dashboardWeekLabel}
+              employees={employees}
+              scheduleEntries={scheduleEntriesForSelectedWeek}
+              selectedEmployeeId={selectedEmployeeId}
+              weekdays={weekdays}
+            />
 
-            <div className="employee-bar">
-              {employees.length > 0 ? (
-                employees.map((employee) => (
-                  <button
-                    key={employee.id}
-                    type="button"
-                    className={`employee-button${
-                      selectedEmployeeId === employee.id ? ' employee-button-active' : ''
-                    }`}
-                    aria-pressed={selectedEmployeeId === employee.id}
-                    onClick={() => setSelectedEmployeeId(employee.id)}
-                  >
-                    {getEmployeeDisplayName(employee)}
-                  </button>
-                ))
-              ) : (
-                <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
-              )}
-            </div>
+            <PlanningWorkspace
+              key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}`}
+              availableCustomers={availableCustomers}
+              calendarWeek={calendarWeek}
+              customers={customers}
+              customersById={customersById}
+              dashboardWeekLabel={dashboardWeekLabel}
+              getTimeIndex={getTimeIndex}
+              isSavingSchedule={isSavingSchedule}
+              onCalendarWeekChange={setCalendarWeek}
+              onCreateScheduleEntry={createScheduleEntry}
+              onDeleteScheduleEntry={deleteScheduleEntry}
+              onMoveScheduleEntry={moveScheduleEntry}
+              onResizeScheduleEntry={resizeScheduleEntry}
+              onYearChange={setYear}
+              scheduleDateRangeLabel={scheduleDateRangeLabel}
+              scheduleEntries={scheduleEntriesForCurrentView}
+              selectedEmployeeId={selectedEmployeeId}
+              selectedEmployeeLabel={selectedEmployeeLabel}
+              sidebarContent={employeeSelectionWidget}
+              timeOptions={timeOptions}
+              timeSlots={timeSlots}
+              weekdays={weekdays}
+              year={year}
+            />
 
-            {isEmployeeFormOpen ? (
-              <form className="form-card" onSubmit={handleEmployeeSubmit}>
-                <div className="form-grid">
-                  <div className="form-field">
-                    <label htmlFor="employee-phone">Telefon</label>
-                    <input
-                      id="employee-phone"
-                      type="text"
-                      value={employeeForm.phone}
-                      onChange={(event) =>
-                        setEmployeeForm((currentForm) => ({
-                          ...currentForm,
-                          phone: event.target.value,
-                        }))
-                      }
-                      placeholder="+43 ..."
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label htmlFor="employee-first-name">Vorname</label>
-                    <input
-                      id="employee-first-name"
-                      type="text"
-                      value={employeeForm.firstName}
-                      onChange={(event) =>
-                        setEmployeeForm((currentForm) => ({
-                          ...currentForm,
-                          firstName: event.target.value,
-                        }))
-                      }
-                      placeholder="Ahmet"
-                      required
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label htmlFor="employee-last-name">Nachname</label>
-                    <input
-                      id="employee-last-name"
-                      type="text"
-                      value={employeeForm.lastName}
-                      onChange={(event) =>
-                        setEmployeeForm((currentForm) => ({
-                          ...currentForm,
-                          lastName: event.target.value,
-                        }))
-                      }
-                      placeholder="Özcan"
-                    />
-                  </div>
-                </div>
-                <div className="form-field">
-                  <label htmlFor="employee-notes">Notizen</label>
-                  <textarea
-                    id="employee-notes"
-                    value={employeeForm.notes}
-                    onChange={(event) =>
-                      setEmployeeForm((currentForm) => ({
-                        ...currentForm,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Interne Hinweise"
-                  />
-                </div>
-                <div className="form-actions">
-                  <button
-                    type="submit"
-                    className="action-button form-button"
-                    disabled={isSavingEmployee}
-                  >
-                    {isSavingEmployee ? 'Speichert...' : 'Speichern'}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button form-button"
-                    disabled={isSavingEmployee}
-                    onClick={resetEmployeeForm}
-                  >
-                    Abbrechen
-                  </button>
-                </div>
-              </form>
-            ) : null}
+            <WeeklyHoursWidget
+              dashboardWeekLabel={dashboardWeekLabel}
+              employees={employees}
+              scheduleEntries={scheduleEntriesForSelectedWeek}
+              selectedEmployeeId={selectedEmployeeId}
+            />
           </section>
+        ) : null}
 
-          <PlanningWorkspace
-            key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}`}
-            availableCustomers={availableCustomers}
-            calendarWeek={calendarWeek}
-            customerForm={customerForm}
-            customers={customers}
-            customersById={customersById}
-            dashboardWeekLabel={dashboardWeekLabel}
-            getTimeIndex={getTimeIndex}
-            isCustomerFormOpen={isCustomerFormOpen}
-            isSavingCustomer={isSavingCustomer}
-            isSavingSchedule={isSavingSchedule}
-            onCalendarWeekChange={setCalendarWeek}
-            onCreateScheduleEntry={createScheduleEntry}
-            onCustomerFieldChange={handleCustomerFormFieldChange}
-            onCustomerSubmit={handleCustomerSubmit}
-            onDeleteScheduleEntry={deleteScheduleEntry}
-            onMoveScheduleEntry={moveScheduleEntry}
-            onResetCustomerForm={resetCustomerForm}
-            onResizeScheduleEntry={resizeScheduleEntry}
-            onToggleCustomerForm={setIsCustomerFormOpen}
-            onYearChange={setYear}
-            scheduleDateRangeLabel={scheduleDateRangeLabel}
-            scheduleEntries={scheduleEntriesForCurrentView}
-            selectedEmployeeId={selectedEmployeeId}
-            selectedEmployeeLabel={selectedEmployeeLabel}
-            timeOptions={timeOptions}
-            timeSlots={timeSlots}
-            weekdays={weekdays}
-            year={year}
+        {isEmployeeManagementActive ? (
+          <section className="dashboard-page-stack">
+            <EmployeeManagementSection
+              employees={employees}
+              employeeForm={employeeForm}
+              isSavingEmployee={isSavingEmployee}
+              onBackToSchedule={() => navigateToDashboardSection('schedule')}
+              onEmployeeFieldChange={handleEmployeeFormFieldChange}
+              onEmployeeSubmit={handleEmployeeSubmit}
+              onResetEmployeeForm={resetEmployeeForm}
+              onSelectEmployee={setSelectedEmployeeId}
+              selectedEmployeeId={selectedEmployeeId}
+            />
+          </section>
+        ) : null}
+
+        {isCustomerManagementActive ? (
+          <section className="dashboard-page-stack">
+            <CustomerManagementSection
+              customerForm={customerForm}
+              customers={customers}
+              isSavingCustomer={isSavingCustomer}
+              onBackToSchedule={() => navigateToDashboardSection('schedule')}
+              onCustomerFieldChange={handleCustomerFormFieldChange}
+              onCustomerSubmit={handleCustomerSubmit}
+              onResetCustomerForm={resetCustomerForm}
+            />
+          </section>
+        ) : null}
+
+        {isLegalSectionActive ? (
+          <LegalSection
+            activeSection={activeDashboardSection}
+            accountName={currentAccount?.name ?? ''}
+            onBackToSchedule={() => navigateToDashboardSection('schedule')}
           />
-        </section>
+        ) : null}
       </section>
     </main>
   )

@@ -1,20 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 const DEFAULT_PLANNER_ROW_HEIGHT = 48
-const MIN_PLANNER_ROW_HEIGHT = 28
-const MIN_PLANNER_VISIBLE_HEIGHT = 360
 const PLANNER_HEADER_HEIGHT = 58
-const PLANNER_VIEWPORT_MARGIN = 24
 const AUTO_SCROLL_EDGE = 72
 const AUTO_SCROLL_STEP = 22
-
-function getPlannerRowHeight(availableHeight, rowCount) {
-  return clamp(
-    Math.floor((availableHeight - PLANNER_HEADER_HEIGHT) / rowCount),
-    MIN_PLANNER_ROW_HEIGHT,
-    DEFAULT_PLANNER_ROW_HEIGHT,
-  )
-}
 
 function getScheduleEntryDay(entry) {
   return entry.day_of_week ?? entry.day ?? ''
@@ -63,7 +52,7 @@ function getReadableTextColor(backgroundColor) {
   }
 
   const brightness = (red * 299 + green * 587 + blue * 114) / 1000
-  return brightness > 170 ? '#15211f' : '#ffffff'
+  return brightness > 170 ? '#0f172a' : '#ffffff'
 }
 
 function isSamePreview(left, right) {
@@ -101,28 +90,22 @@ function formatDurationLabel(startTime, endTime, getTimeIndex) {
 function PlanningWorkspace({
   availableCustomers,
   calendarWeek,
-  customerForm,
   customers,
   customersById,
   dashboardWeekLabel,
   getTimeIndex,
-  isCustomerFormOpen,
-  isSavingCustomer,
   isSavingSchedule,
   onCalendarWeekChange,
   onCreateScheduleEntry,
-  onCustomerFieldChange,
-  onCustomerSubmit,
   onDeleteScheduleEntry,
   onMoveScheduleEntry,
-  onResetCustomerForm,
   onResizeScheduleEntry,
-  onToggleCustomerForm,
   onYearChange,
   scheduleDateRangeLabel,
   scheduleEntries,
   selectedEmployeeId,
   selectedEmployeeLabel,
+  sidebarContent,
   timeOptions,
   timeSlots,
   weekdays,
@@ -131,25 +114,15 @@ function PlanningWorkspace({
   const [interaction, setInteraction] = useState(null)
   const [pointerPosition, setPointerPosition] = useState({ x: 0, y: 0 })
   const [previewPlacement, setPreviewPlacement] = useState(null)
-  const [plannerMetrics, setPlannerMetrics] = useState(() => {
-    const initialVisibleHeight = 620
-    const initialRowHeight = getPlannerRowHeight(initialVisibleHeight, timeSlots.length)
-
-    return {
-      rowHeight: initialRowHeight,
-      visibleHeight: initialVisibleHeight,
-    }
-  })
   const scrollAreaRef = useRef(null)
-  const plannerBoardRef = useRef(null)
   const boardRef = useRef(null)
 
   const scheduledAssignmentsCount = scheduleEntries.length
   const isPlannerInteractive = selectedEmployeeId !== null && !isSavingSchedule
   const activePreviewCustomer =
     interaction?.customerId !== undefined ? customersById[interaction.customerId] ?? null : null
-  const plannerRowHeight = plannerMetrics.rowHeight
-  const plannerVisibleHeight = plannerMetrics.visibleHeight
+  const plannerRowHeight = DEFAULT_PLANNER_ROW_HEIGHT
+  const plannerVisibleHeight = PLANNER_HEADER_HEIGHT + plannerRowHeight * timeSlots.length
 
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
     const startIndex = getTimeIndex(startTime)
@@ -289,70 +262,6 @@ function PlanningWorkspace({
       valid: true,
     }
   }
-
-  const updatePlannerMetrics = useEffectEvent(() => {
-    const plannerBoardElement = plannerBoardRef.current
-
-    if (!plannerBoardElement) {
-      return
-    }
-
-    const availableHeight = Math.floor(
-      window.innerHeight - plannerBoardElement.getBoundingClientRect().top - PLANNER_VIEWPORT_MARGIN,
-    )
-
-    if (!Number.isFinite(availableHeight)) {
-      return
-    }
-
-    const nextRowHeight = getPlannerRowHeight(availableHeight, timeSlots.length)
-    const contentHeight = PLANNER_HEADER_HEIGHT + nextRowHeight * timeSlots.length
-    const nextVisibleHeight = clamp(
-      availableHeight,
-      MIN_PLANNER_VISIBLE_HEIGHT,
-      contentHeight,
-    )
-
-    setPlannerMetrics((currentMetrics) => {
-      if (
-        currentMetrics.rowHeight === nextRowHeight &&
-        currentMetrics.visibleHeight === nextVisibleHeight
-      ) {
-        return currentMetrics
-      }
-
-      return {
-        rowHeight: nextRowHeight,
-        visibleHeight: nextVisibleHeight,
-      }
-    })
-  })
-
-  useEffect(() => {
-    updatePlannerMetrics()
-
-    const handleResize = () => {
-      updatePlannerMetrics()
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    const resizeObserver =
-      typeof ResizeObserver === 'function'
-        ? new ResizeObserver(() => {
-            updatePlannerMetrics()
-          })
-        : null
-
-    if (resizeObserver && plannerBoardRef.current?.parentElement) {
-      resizeObserver.observe(plannerBoardRef.current.parentElement)
-    }
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      resizeObserver?.disconnect()
-    }
-  }, [timeSlots.length])
 
   const handlePointerMove = useEffectEvent((event) => {
     if (!interaction) {
@@ -541,7 +450,7 @@ function PlanningWorkspace({
   }
 
   return (
-    <>
+    <section className="planning-workspace-layout">
       <section
         id="dienstplan-widget"
         className="panel dashboard-widget schedule-widget"
@@ -596,7 +505,6 @@ function PlanningWorkspace({
         </div>
 
         <div
-          ref={plannerBoardRef}
           className={`planner-board${interaction ? ' planner-board-interacting' : ''}`}
           style={{
             '--planner-row-height': `${plannerRowHeight}px`,
@@ -655,8 +563,8 @@ function PlanningWorkspace({
                           style={{
                             '--entry-start': String(previewStartIndex),
                             '--entry-span': String(previewSpan),
-                            backgroundColor: activePreviewCustomer?.color ?? '#0f766e',
-                            color: getReadableTextColor(activePreviewCustomer?.color ?? '#0f766e'),
+                            backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
+                            color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
                           }}
                         >
                           <span className="planner-entry-chip">
@@ -681,7 +589,7 @@ function PlanningWorkspace({
                           const endIndex = getTimeIndex(endTime)
                           const span = Math.max(endIndex - startIndex, 1)
                           const isCompactEntry = span === 1
-                          const showDurationChip = span > 2
+                          const showExtendedScheduleInfo = span >= 2
                           const isMovingEntry =
                             interaction?.mode === 'move' && interaction.entryId === entry.id
                           const isResizingEntry =
@@ -706,7 +614,7 @@ function PlanningWorkspace({
                               }`}
                               onPointerDown={(event) => handleEntryPointerDown(entry, event)}
                             >
-                              {showDurationChip ? (
+                              {showExtendedScheduleInfo ? (
                                 <div className="planner-entry-topline">
                                   <span className="planner-entry-chip">
                                     {formatDurationLabel(startTime, endTime, getTimeIndex)}
@@ -725,6 +633,11 @@ function PlanningWorkspace({
                               <strong className="planner-entry-name">
                                 {customer?.name ?? `Kunde #${entry.customer_id}`}
                               </strong>
+                              {showExtendedScheduleInfo ? (
+                                <span className="planner-entry-time">
+                                  {startTime} - {endTime}
+                                </span>
+                              ) : null}
                               {customer?.address && !isCompactEntry ? (
                                 <span className="planner-entry-address">{customer.address}</span>
                               ) : null}
@@ -734,7 +647,7 @@ function PlanningWorkspace({
                                 aria-label="Einsatzdauer anpassen"
                                 onPointerDown={(event) => handleResizePointerDown(entry, event)}
                               >
-                                <span aria-hidden="true">↕</span>
+                                <span aria-hidden="true">{isCompactEntry ? '⇵' : '↕'}</span>
                               </button>
                             </article>
                           )
@@ -758,8 +671,8 @@ function PlanningWorkspace({
               className="planner-drag-ghost"
               style={{
                 transform: `translate(${pointerPosition.x + 18}px, ${pointerPosition.y + 18}px)`,
-                backgroundColor: activePreviewCustomer?.color ?? '#0f766e',
-                color: getReadableTextColor(activePreviewCustomer?.color ?? '#0f766e'),
+                backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
+                color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
               }}
             >
               <strong>{activePreviewCustomer?.name ?? 'Einsatz'}</strong>
@@ -775,127 +688,64 @@ function PlanningWorkspace({
         </div>
       </section>
 
-      <section
-        id="kunden-widget"
-        className="panel dashboard-widget customer-widget"
-        aria-label="Kunden"
-      >
-        <div className="widget-topline">
-          <div>
-            <h2>Kunden</h2>
-            <p className="widget-note">Offene Kunden für {dashboardWeekLabel}.</p>
+      <div className="planning-workspace-sidebar">
+        {sidebarContent}
+
+        <section
+          id="kunden-widget"
+          className="panel dashboard-widget customer-widget"
+          aria-label="Kunden"
+        >
+          <div className="widget-topline">
+            <div>
+              <h2>Kunden</h2>
+            </div>
+            <div className="widget-topline-actions">
+              <span className="widget-count-pill">
+                {String(availableCustomers.length).padStart(2, '0')}
+              </span>
+            </div>
           </div>
-          <div className="widget-topline-actions">
-            <span className="widget-count-pill">
-              {String(availableCustomers.length).padStart(2, '0')}
-            </span>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Kundenformular öffnen"
-              disabled={isSavingCustomer}
-              onClick={() => onToggleCustomerForm((currentValue) => !currentValue)}
-            >
-              {isCustomerFormOpen ? '−' : '+'}
-            </button>
+
+          <div className="customer-list">
+            {availableCustomers.length > 0 ? (
+              availableCustomers.map((customer) => (
+                <article
+                  key={customer.id}
+                  className={`customer-card${
+                    interaction?.mode === 'create' && interaction.customerId === customer.id
+                      ? ' customer-card-active'
+                      : ''
+                  }${!isPlannerInteractive ? ' customer-card-disabled' : ''}`}
+                  style={{
+                    backgroundColor: customer.color,
+                    color: getReadableTextColor(customer.color),
+                  }}
+                  onPointerDown={(event) => handleCustomerPointerDown(customer, event)}
+                >
+                  <div className="customer-card-content">
+                    <span>{customer.name}</span>
+                    {customer.address ? (
+                      <span className="customer-card-meta">{customer.address}</span>
+                    ) : null}
+                  </div>
+                  <span className="customer-card-action">Einplanen</span>
+                </article>
+              ))
+            ) : customers.length > 0 && selectedEmployeeId !== null ? (
+              <p className="empty-state">
+                Alle Kunden für {selectedEmployeeLabel} in {dashboardWeekLabel} sind bereits
+                eingeplant.
+              </p>
+            ) : selectedEmployeeId === null ? (
+              <p className="empty-state">Wähle zuerst einen Mitarbeiter zum Planen aus.</p>
+            ) : (
+              <p className="empty-state">Keine Kunden vorhanden.</p>
+            )}
           </div>
-        </div>
-
-        <div className="customer-panel-hint">
-          <span>Drag & drop</span>
-          <strong>Per Maus oder Touch in den Plan ziehen</strong>
-        </div>
-
-        <div className="customer-list">
-          {availableCustomers.length > 0 ? (
-            availableCustomers.map((customer) => (
-              <article
-                key={customer.id}
-                className={`customer-card${
-                  interaction?.mode === 'create' && interaction.customerId === customer.id
-                    ? ' customer-card-active'
-                    : ''
-                }${!isPlannerInteractive ? ' customer-card-disabled' : ''}`}
-                style={{
-                  backgroundColor: customer.color,
-                  color: getReadableTextColor(customer.color),
-                }}
-                onPointerDown={(event) => handleCustomerPointerDown(customer, event)}
-              >
-                <div className="customer-card-content">
-                  <span>{customer.name}</span>
-                  {customer.address ? (
-                    <span className="customer-card-meta">{customer.address}</span>
-                  ) : null}
-                </div>
-                <span className="customer-card-action">Einplanen</span>
-              </article>
-            ))
-          ) : customers.length > 0 && selectedEmployeeId !== null ? (
-            <p className="empty-state">
-              Alle Kunden für {selectedEmployeeLabel} in {dashboardWeekLabel} sind bereits
-              eingeplant.
-            </p>
-          ) : selectedEmployeeId === null ? (
-            <p className="empty-state">Wähle zuerst einen Mitarbeiter zum Planen aus.</p>
-          ) : (
-            <p className="empty-state">Keine Kunden vorhanden.</p>
-          )}
-        </div>
-
-        {isCustomerFormOpen ? (
-          <form className="form-card" onSubmit={onCustomerSubmit}>
-            <div className="form-field">
-              <label htmlFor="customer-name">Kundenname</label>
-              <input
-                id="customer-name"
-                type="text"
-                value={customerForm.name}
-                onChange={(event) => onCustomerFieldChange('name', event.target.value)}
-                placeholder="Reinigung Maier"
-                required
-              />
-            </div>
-            <div className="form-field">
-              <label htmlFor="customer-address">Adresse</label>
-              <input
-                id="customer-address"
-                type="text"
-                value={customerForm.address}
-                onChange={(event) => onCustomerFieldChange('address', event.target.value)}
-                placeholder="Wiener Straße 1"
-              />
-            </div>
-            <div className="form-field">
-              <label htmlFor="customer-notes">Notizen</label>
-              <textarea
-                id="customer-notes"
-                value={customerForm.notes}
-                onChange={(event) => onCustomerFieldChange('notes', event.target.value)}
-                placeholder="Zugang, Schlüssel, Besonderheiten"
-              />
-            </div>
-            <div className="form-actions">
-              <button
-                type="submit"
-                className="action-button form-button"
-                disabled={isSavingCustomer}
-              >
-                {isSavingCustomer ? 'Speichert...' : 'Speichern'}
-              </button>
-              <button
-                type="button"
-                className="secondary-button form-button"
-                disabled={isSavingCustomer}
-                onClick={onResetCustomerForm}
-              >
-                Abbrechen
-              </button>
-            </div>
-          </form>
-        ) : null}
-      </section>
-    </>
+        </section>
+      </div>
+    </section>
   )
 }
 
