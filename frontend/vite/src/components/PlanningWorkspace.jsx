@@ -88,17 +88,19 @@ function formatDurationLabel(startTime, endTime, getTimeIndex) {
 }
 
 function PlanningWorkspace({
-  availableCustomers,
   calendarWeek,
+  customersAvailableForWidget,
   customers,
   customersById,
   dashboardWeekLabel,
   getTimeIndex,
   isSavingSchedule,
+  onAddCustomerToWidget,
   onCalendarWeekChange,
   onCreateScheduleEntry,
   onDeleteScheduleEntry,
   onMoveScheduleEntry,
+  onRemoveCustomerFromWidget,
   onResizeScheduleEntry,
   onYearChange,
   scheduleDateRangeLabel,
@@ -108,10 +110,12 @@ function PlanningWorkspace({
   sidebarContent,
   timeOptions,
   timeSlots,
+  widgetCustomers,
   weekdays,
   year,
 }) {
   const [interaction, setInteraction] = useState(null)
+  const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false)
   const [pointerPosition, setPointerPosition] = useState({ x: 0, y: 0 })
   const [previewPlacement, setPreviewPlacement] = useState(null)
   const scrollAreaRef = useRef(null)
@@ -123,6 +127,8 @@ function PlanningWorkspace({
     interaction?.customerId !== undefined ? customersById[interaction.customerId] ?? null : null
   const plannerRowHeight = DEFAULT_PLANNER_ROW_HEIGHT
   const plannerVisibleHeight = PLANNER_HEADER_HEIGHT + plannerRowHeight * timeSlots.length
+  const canAddCustomersToWidget = customersAvailableForWidget.length > 0
+  const isCustomerPickerVisible = isCustomerPickerOpen && canAddCustomersToWidget
 
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
     const startIndex = getTimeIndex(startTime)
@@ -359,7 +365,7 @@ function PlanningWorkspace({
   }, [interaction])
 
   const handleCustomerPointerDown = (customer, event) => {
-    if (event.button !== 0) {
+    if (event.button !== 0 || event.target.closest('button')) {
       return
     }
 
@@ -701,15 +707,57 @@ function PlanningWorkspace({
               <h2>Kunden</h2>
             </div>
             <div className="widget-topline-actions">
+              <button
+                type="button"
+                className="icon-button customer-widget-add-button"
+                aria-label="Kunden zum Widget hinzufügen"
+                disabled={!canAddCustomersToWidget}
+                onClick={() => setIsCustomerPickerOpen((currentValue) => !currentValue)}
+              >
+                +
+              </button>
               <span className="widget-count-pill">
-                {String(availableCustomers.length).padStart(2, '0')}
+                {String(widgetCustomers.length).padStart(2, '0')}
               </span>
             </div>
           </div>
 
+          {isCustomerPickerVisible ? (
+            <section className="customer-picker-panel" aria-label="Kunden zum Widget hinzufügen">
+              <p className="customer-picker-title">Kunden zum Widget hinzufügen</p>
+              <div className="customer-picker-list">
+                {customersAvailableForWidget.map((customer) => (
+                  <article
+                    key={customer.id}
+                    className="customer-picker-card"
+                    style={{
+                      backgroundColor: customer.color,
+                      color: getReadableTextColor(customer.color),
+                    }}
+                  >
+                    <div className="customer-picker-content">
+                      <strong>{customer.name}</strong>
+                      {customer.address ? (
+                        <span className="customer-picker-meta">{customer.address}</span>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="customer-picker-add"
+                      aria-label={`${customer.name} zum Widget hinzufügen`}
+                      onClick={() => onAddCustomerToWidget(customer.id)}
+                    >
+                      +
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <div className="customer-list">
-            {availableCustomers.length > 0 ? (
-              availableCustomers.map((customer) => (
+            {widgetCustomers.length > 0 ? (
+              widgetCustomers.map((customer) => (
                 <article
                   key={customer.id}
                   className={`customer-card${
@@ -729,16 +777,23 @@ function PlanningWorkspace({
                       <span className="customer-card-meta">{customer.address}</span>
                     ) : null}
                   </div>
-                  <span className="customer-card-action">Einplanen</span>
+                  <div className="customer-card-actions">
+                    <button
+                      type="button"
+                      className="customer-card-remove"
+                      aria-label={`${customer.name} aus dem Widget entfernen`}
+                      onClick={() => onRemoveCustomerFromWidget(customer.id)}
+                    >
+                      ×
+                    </button>
+                    <span className="customer-card-action">Einplanen</span>
+                  </div>
                 </article>
               ))
-            ) : customers.length > 0 && selectedEmployeeId !== null ? (
-              <p className="empty-state">
-                Alle Kunden für {selectedEmployeeLabel} in {dashboardWeekLabel} sind bereits
-                eingeplant.
+            ) : customers.length > 0 ? (
+              <p className="empty-state customer-widget-empty">
+                Kunden liegen noch nicht im Widget. Füge sie oben rechts über + hinzu.
               </p>
-            ) : selectedEmployeeId === null ? (
-              <p className="empty-state">Wähle zuerst einen Mitarbeiter zum Planen aus.</p>
             ) : (
               <p className="empty-state">Keine Kunden vorhanden.</p>
             )}

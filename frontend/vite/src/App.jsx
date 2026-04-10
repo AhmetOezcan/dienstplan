@@ -618,10 +618,12 @@ function EmployeeManagementSection({
   employeeForm,
   isSavingEmployee,
   onBackToSchedule,
+  onDeleteEmployee,
   onEmployeeFieldChange,
   onEmployeeSubmit,
   onResetEmployeeForm,
   onSelectEmployee,
+  pendingEmployeeDeleteId,
   selectedEmployeeId,
 }) {
   return (
@@ -647,22 +649,32 @@ function EmployeeManagementSection({
           <div className="management-list">
             {employees.length > 0 ? (
               employees.map((employee) => (
-                <button
-                  key={employee.id}
-                  type="button"
-                  className={`management-list-item${
-                    selectedEmployeeId === employee.id ? ' management-list-item-active' : ''
-                  }`}
-                  onClick={() => onSelectEmployee(employee.id)}
-                >
-                  <strong>{getEmployeeDisplayName(employee)}</strong>
-                  {employee.phone ? (
-                    <span className="management-list-meta">{employee.phone}</span>
-                  ) : null}
-                  {employee.notes ? (
-                    <span className="management-list-meta">{employee.notes}</span>
-                  ) : null}
-                </button>
+                <article key={employee.id} className="management-list-row">
+                  <button
+                    type="button"
+                    className={`management-list-item management-list-select${
+                      selectedEmployeeId === employee.id ? ' management-list-item-active' : ''
+                    }`}
+                    disabled={isSavingEmployee}
+                    onClick={() => onSelectEmployee(employee.id)}
+                  >
+                    <strong>{getEmployeeDisplayName(employee)}</strong>
+                    {employee.phone ? (
+                      <span className="management-list-meta">{employee.phone}</span>
+                    ) : null}
+                    {employee.notes ? (
+                      <span className="management-list-meta">{employee.notes}</span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="management-list-delete"
+                    disabled={isSavingEmployee}
+                    onClick={() => onDeleteEmployee(employee)}
+                  >
+                    {pendingEmployeeDeleteId === employee.id ? 'Löscht...' : 'Löschen'}
+                  </button>
+                </article>
               ))
             ) : (
               <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
@@ -722,7 +734,7 @@ function EmployeeManagementSection({
 
             <div className="form-actions">
               <button type="submit" className="action-button form-button" disabled={isSavingEmployee}>
-                {isSavingEmployee ? 'Speichert...' : 'Speichern'}
+                {isSavingEmployee ? 'Wird verarbeitet...' : 'Speichern'}
               </button>
               <button
                 type="button"
@@ -746,8 +758,10 @@ function CustomerManagementSection({
   isSavingCustomer,
   onBackToSchedule,
   onCustomerFieldChange,
+  onDeleteCustomer,
   onCustomerSubmit,
   onResetCustomerForm,
+  pendingCustomerDeleteId,
 }) {
   return (
     <section className="panel management-panel" aria-label="Kunden verwalten">
@@ -772,21 +786,31 @@ function CustomerManagementSection({
           <div className="management-list">
             {customers.length > 0 ? (
               customers.map((customer) => (
-                <article key={customer.id} className="management-list-item management-list-item-static">
-                  <span
-                    className="management-color-dot"
-                    aria-hidden="true"
-                    style={{ backgroundColor: customer.color }}
-                  />
-                  <div className="management-list-content">
-                    <strong>{customer.name}</strong>
-                    {customer.address ? (
-                      <span className="management-list-meta">{customer.address}</span>
-                    ) : null}
-                    {customer.notes ? (
-                      <span className="management-list-meta">{customer.notes}</span>
-                    ) : null}
+                <article key={customer.id} className="management-list-row">
+                  <div className="management-list-item management-list-item-static">
+                    <span
+                      className="management-color-dot"
+                      aria-hidden="true"
+                      style={{ backgroundColor: customer.color }}
+                    />
+                    <div className="management-list-content">
+                      <strong>{customer.name}</strong>
+                      {customer.address ? (
+                        <span className="management-list-meta">{customer.address}</span>
+                      ) : null}
+                      {customer.notes ? (
+                        <span className="management-list-meta">{customer.notes}</span>
+                      ) : null}
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    className="management-list-delete"
+                    disabled={isSavingCustomer}
+                    onClick={() => onDeleteCustomer(customer)}
+                  >
+                    {pendingCustomerDeleteId === customer.id ? 'Löscht...' : 'Löschen'}
+                  </button>
                 </article>
               ))
             ) : (
@@ -833,7 +857,7 @@ function CustomerManagementSection({
             </div>
             <div className="form-actions">
               <button type="submit" className="action-button form-button" disabled={isSavingCustomer}>
-                {isSavingCustomer ? 'Speichert...' : 'Speichern'}
+                {isSavingCustomer ? 'Wird verarbeitet...' : 'Speichern'}
               </button>
               <button
                 type="button"
@@ -1044,6 +1068,7 @@ function App() {
   const [activeDashboardSection, setActiveDashboardSection] = useState('schedule')
   const [isLegalMenuOpen, setIsLegalMenuOpen] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
+  const [customerWidgetCustomerIds, setCustomerWidgetCustomerIds] = useState([])
   const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
   const [year, setYear] = useState(INITIAL_CALENDAR_STATE.year)
@@ -1056,6 +1081,8 @@ function App() {
   const [isSavingEmployee, setIsSavingEmployee] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
+  const [pendingEmployeeDeleteId, setPendingEmployeeDeleteId] = useState(null)
+  const [pendingCustomerDeleteId, setPendingCustomerDeleteId] = useState(null)
   const headerMenuRef = useRef(null)
 
   const authToken = authSession.accessToken
@@ -1182,6 +1209,14 @@ function App() {
     }
   }, [isLegalMenuOpen])
 
+  useEffect(() => {
+    const validCustomerIds = new Set(customers.map((customer) => customer.id))
+
+    setCustomerWidgetCustomerIds((currentCustomerIds) =>
+      currentCustomerIds.filter((customerId) => validCustomerIds.has(customerId)),
+    )
+  }, [customers])
+
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
   const selectedEmployeeLabel = selectedEmployee
@@ -1189,6 +1224,13 @@ function App() {
     : 'Kein Mitarbeiter ausgewählt'
   const scheduleDateRangeLabel = getCalendarWeekDateRangeLabel(year, calendarWeek)
   const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
+  const customerWidgetIdSet = new Set(customerWidgetCustomerIds)
+  const widgetCustomers = customerWidgetCustomerIds
+    .map((customerId) => customersById[customerId] ?? null)
+    .filter(Boolean)
+  const customersAvailableForWidget = customers.filter(
+    (customer) => !customerWidgetIdSet.has(customer.id),
+  )
   const scheduleEntriesForSelectedWeek = scheduleEntries.filter((entry) =>
     isIsoDateInCalendarWeek(getScheduleEntryDate(entry), year, calendarWeek),
   )
@@ -1196,13 +1238,6 @@ function App() {
     selectedEmployeeId === null
       ? []
       : scheduleEntriesForSelectedWeek.filter((entry) => entry.employee_id === selectedEmployeeId)
-  const scheduledCustomerIds = new Set(
-    scheduleEntriesForCurrentView.map((entry) => entry.customer_id),
-  )
-  const availableCustomers =
-    selectedEmployeeId === null
-      ? customers
-      : customers.filter((customer) => !scheduledCustomerIds.has(customer.id))
   const dashboardWeekLabel = `KW ${calendarWeek}/${year}`
 
   const resetAuthenticatedApp = (message = '') => {
@@ -1211,6 +1246,7 @@ function App() {
     setSetupForm(createInitialSetupForm())
     setEmployees([])
     setCustomers([])
+    setCustomerWidgetCustomerIds([])
     setScheduleEntries([])
     setActiveDashboardSection('schedule')
     setIsLegalMenuOpen(false)
@@ -1219,6 +1255,8 @@ function App() {
     setAuthError(message)
     setIsLoading(false)
     setIsCompletingSetup(false)
+    setPendingEmployeeDeleteId(null)
+    setPendingCustomerDeleteId(null)
   }
 
   const resetEmployeeForm = () => {
@@ -1351,6 +1389,7 @@ function App() {
       return
     }
 
+    setPendingEmployeeDeleteId(null)
     setIsSavingEmployee(true)
 
     try {
@@ -1381,6 +1420,52 @@ function App() {
     }
   }
 
+  const handleEmployeeDelete = async (employee) => {
+    if (!employee || isSavingEmployee) {
+      return
+    }
+
+    const employeeLabel = getEmployeeDisplayName(employee) || `Mitarbeiter #${employee.id}`
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`${employeeLabel} wirklich löschen?`)
+    ) {
+      return
+    }
+
+    setPendingEmployeeDeleteId(employee.id)
+    setIsSavingEmployee(true)
+
+    try {
+      await apiRequest(`/employees/${employee.id}`, {
+        method: 'DELETE',
+        accessToken: authToken,
+      })
+
+      setEmployees((currentEmployees) =>
+        currentEmployees.filter((currentEmployee) => currentEmployee.id !== employee.id),
+      )
+      setSelectedEmployeeId((currentEmployeeId) => {
+        if (currentEmployeeId !== employee.id) {
+          return currentEmployeeId
+        }
+
+        return employees.find((currentEmployee) => currentEmployee.id !== employee.id)?.id ?? null
+      })
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setLoadError(error.message || 'Mitarbeiter konnte nicht gelöscht werden.')
+    } finally {
+      setPendingEmployeeDeleteId(null)
+      setIsSavingEmployee(false)
+    }
+  }
+
   const handleCustomerSubmit = async (event) => {
     event.preventDefault()
 
@@ -1393,6 +1478,7 @@ function App() {
       return
     }
 
+    setPendingCustomerDeleteId(null)
     setIsSavingCustomer(true)
 
     try {
@@ -1422,6 +1508,45 @@ function App() {
     }
   }
 
+  const handleCustomerDelete = async (customer) => {
+    if (!customer || isSavingCustomer) {
+      return
+    }
+
+    const customerLabel = customer.name || `Kunde #${customer.id}`
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`${customerLabel} wirklich löschen?`)
+    ) {
+      return
+    }
+
+    setPendingCustomerDeleteId(customer.id)
+    setIsSavingCustomer(true)
+
+    try {
+      await apiRequest(`/customers/${customer.id}`, {
+        method: 'DELETE',
+        accessToken: authToken,
+      })
+
+      setCustomers((currentCustomers) =>
+        currentCustomers.filter((currentCustomer) => currentCustomer.id !== customer.id),
+      )
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setLoadError(error.message || 'Kunde konnte nicht gelöscht werden.')
+    } finally {
+      setPendingCustomerDeleteId(null)
+      setIsSavingCustomer(false)
+    }
+  }
+
   const handleCustomerFormFieldChange = (field, value) => {
     setCustomerForm((currentForm) => ({
       ...currentForm,
@@ -1434,6 +1559,30 @@ function App() {
       ...currentForm,
       [field]: value,
     }))
+  }
+
+  const addCustomerToWidget = (customerId) => {
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      return
+    }
+
+    if (!customersById[customerId]) {
+      return
+    }
+
+    setCustomerWidgetCustomerIds((currentCustomerIds) => {
+      if (currentCustomerIds.includes(customerId)) {
+        return currentCustomerIds
+      }
+
+      return [...currentCustomerIds, customerId]
+    })
+  }
+
+  const removeCustomerFromWidget = (customerId) => {
+    setCustomerWidgetCustomerIds((currentCustomerIds) =>
+      currentCustomerIds.filter((currentCustomerId) => currentCustomerId !== customerId),
+    )
   }
 
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
@@ -1468,11 +1617,6 @@ function App() {
 
     if (!Number.isInteger(customerId) || customerId <= 0 || !endTime) {
       setLoadError('Dieser Kunde konnte nicht eingeplant werden.')
-      return
-    }
-
-    if (scheduledCustomerIds.has(customerId)) {
-      setLoadError('Dieser Kunde ist für den ausgewählten Mitarbeiter in dieser Woche bereits eingeplant.')
       return
     }
 
@@ -1961,17 +2105,19 @@ function App() {
 
             <PlanningWorkspace
               key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}`}
-              availableCustomers={availableCustomers}
               calendarWeek={calendarWeek}
+              customersAvailableForWidget={customersAvailableForWidget}
               customers={customers}
               customersById={customersById}
               dashboardWeekLabel={dashboardWeekLabel}
               getTimeIndex={getTimeIndex}
               isSavingSchedule={isSavingSchedule}
+              onAddCustomerToWidget={addCustomerToWidget}
               onCalendarWeekChange={setCalendarWeek}
               onCreateScheduleEntry={createScheduleEntry}
               onDeleteScheduleEntry={deleteScheduleEntry}
               onMoveScheduleEntry={moveScheduleEntry}
+              onRemoveCustomerFromWidget={removeCustomerFromWidget}
               onResizeScheduleEntry={resizeScheduleEntry}
               onYearChange={setYear}
               scheduleDateRangeLabel={scheduleDateRangeLabel}
@@ -1981,6 +2127,7 @@ function App() {
               sidebarContent={employeeSelectionWidget}
               timeOptions={timeOptions}
               timeSlots={timeSlots}
+              widgetCustomers={widgetCustomers}
               weekdays={weekdays}
               year={year}
             />
@@ -2001,10 +2148,12 @@ function App() {
               employeeForm={employeeForm}
               isSavingEmployee={isSavingEmployee}
               onBackToSchedule={() => navigateToDashboardSection('schedule')}
+              onDeleteEmployee={handleEmployeeDelete}
               onEmployeeFieldChange={handleEmployeeFormFieldChange}
               onEmployeeSubmit={handleEmployeeSubmit}
               onResetEmployeeForm={resetEmployeeForm}
               onSelectEmployee={setSelectedEmployeeId}
+              pendingEmployeeDeleteId={pendingEmployeeDeleteId}
               selectedEmployeeId={selectedEmployeeId}
             />
           </section>
@@ -2018,8 +2167,10 @@ function App() {
               isSavingCustomer={isSavingCustomer}
               onBackToSchedule={() => navigateToDashboardSection('schedule')}
               onCustomerFieldChange={handleCustomerFormFieldChange}
+              onDeleteCustomer={handleCustomerDelete}
               onCustomerSubmit={handleCustomerSubmit}
               onResetCustomerForm={resetCustomerForm}
+              pendingCustomerDeleteId={pendingCustomerDeleteId}
             />
           </section>
         ) : null}
