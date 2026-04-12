@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, Integer, String, UniqueConstraint, func, text
 
 from app.database import Base
 
@@ -32,7 +32,7 @@ class LoginAttemptTracker(Base):
     id = Column(Integer, primary_key=True)
     scope = Column(String(16), nullable=False)
     scope_value = Column(String(320), nullable=False)
-    failure_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     window_started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_failed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     blocked_until = Column(DateTime(timezone=True), nullable=True)

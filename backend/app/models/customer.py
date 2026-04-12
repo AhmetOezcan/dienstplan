@@ -1,4 +1,17 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -8,6 +21,14 @@ class Customer(Base):
     __tablename__ = "customers"
     __table_args__ = (
         UniqueConstraint("account_id", "id", name="uq_customers_account_id_id"),
+        CheckConstraint(
+            "char_length(btrim(name)) > 0",
+            name="ck_customers_name_not_blank",
+        ),
+        CheckConstraint(
+            "char_length(btrim(color)) > 0",
+            name="ck_customers_color_not_blank",
+        ),
         Index("ix_customers_account_id_name", "account_id", "name"),
     )
 
@@ -15,9 +36,14 @@ class Customer(Base):
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     name = Column(String(255), nullable=False)
     address = Column(Text, nullable=True)
-    color = Column(String(20), nullable=False, default="#2563eb")
+    color = Column(
+        String(20),
+        nullable=False,
+        default="#2563eb",
+        server_default=text("'#2563eb'"),
+    )
     notes = Column(Text, nullable=True)
-    is_active = Column(Boolean, nullable=False, default=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     account = relationship("Account", back_populates="customers")

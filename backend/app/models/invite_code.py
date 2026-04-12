@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, func, text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -27,7 +27,7 @@ class InviteCode(Base):
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True, index=True)
     code = Column(String(64), unique=True, index=True, nullable=False)
     role = Column(String(50), nullable=False)
-    is_used = Column(Boolean, nullable=False, default=False)
+    is_used = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     used_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

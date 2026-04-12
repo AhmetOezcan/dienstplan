@@ -1,3 +1,5 @@
+import { printSection } from '../utils/printSection'
+
 function getEmployeeDisplayName(employee) {
   if (!employee) {
     return ''
@@ -118,12 +120,15 @@ function getEmployeeAvatarColor(employeeId) {
 }
 
 function WeeklyOverviewWidget({
+  calendarWeek,
   customersById,
   dashboardWeekLabel,
   employees,
+  scheduleDateRangeLabel,
   scheduleEntries,
   selectedEmployeeId,
   weekdays,
+  year,
 }) {
   const entriesByEmployeeId = {}
   const summariesByEmployeeId = {}
@@ -174,124 +179,246 @@ function WeeklyOverviewWidget({
             Alle Mitarbeitenden und Aufträge in {dashboardWeekLabel}. {scheduledEmployeesLabel}
           </p>
         </div>
-        <span className="widget-count-pill widget-count-pill-accent">
-          {String(totalAssignments).padStart(2, '0')}
-        </span>
+        <div className="widget-topline-actions">
+          <button
+            type="button"
+            className="secondary-button widget-print-button"
+            onClick={() =>
+              printSection('wochenuebersicht-widget', {
+                pageStyle: '@page { size: A4 landscape; margin: 10mm; }',
+              })
+            }
+          >
+            Drucken
+          </button>
+          <span className="widget-count-pill widget-count-pill-accent">
+            {String(totalAssignments).padStart(2, '0')}
+          </span>
+        </div>
       </div>
 
       {employees.length === 0 ? (
         <p className="empty-state">Keine Mitarbeiter vorhanden.</p>
       ) : (
-        <div className="weekly-overview-board">
-          <table className="weekly-overview-table">
-            <thead>
-              <tr>
-                <th scope="col" className="weekly-overview-corner">
-                  <div className="weekly-overview-corner-content">
-                    <span className="weekly-overview-kicker">Mitarbeiter</span>
-                    <strong>{String(employees.length).padStart(2, '0')} gesamt</strong>
-                  </div>
-                </th>
-                {weekdays.map((day) => (
-                  <th key={day} scope="col" className="weekly-overview-day-header">
-                    {day}
+        <>
+          <div className="weekly-overview-board">
+            <table className="weekly-overview-table">
+              <thead>
+                <tr>
+                  <th scope="col" className="weekly-overview-corner">
+                    <div className="weekly-overview-corner-content">
+                      <span className="weekly-overview-kicker">Mitarbeiter</span>
+                      <strong>{String(employees.length).padStart(2, '0')} gesamt</strong>
+                    </div>
                   </th>
-                ))}
-              </tr>
-            </thead>
+                  {weekdays.map((day) => (
+                    <th key={day} scope="col" className="weekly-overview-day-header">
+                      {day}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
 
-            <tbody>
-              {employees.map((employee, index) => {
-                const employeeLabel = getEmployeeDisplayName(employee)
-                const employeeAvatarLabel = getEmployeeAvatarLabel(employeeLabel)
-                const employeeAvatarColor = getEmployeeAvatarColor(employee.id)
-                const summary = summariesByEmployeeId[employee.id] ?? {
-                  assignmentCount: 0,
-                  totalHours: 0,
-                }
+              <tbody>
+                {employees.map((employee, index) => {
+                  const employeeLabel = getEmployeeDisplayName(employee)
+                  const employeeAvatarLabel = getEmployeeAvatarLabel(employeeLabel)
+                  const employeeAvatarColor = getEmployeeAvatarColor(employee.id)
+                  const summary = summariesByEmployeeId[employee.id] ?? {
+                    assignmentCount: 0,
+                    totalHours: 0,
+                  }
 
-                return (
-                  <tr
-                    key={employee.id}
-                    className={`weekly-overview-row${
-                      selectedEmployeeId === employee.id ? ' weekly-overview-row-selected' : ''
-                    }`}
-                  >
-                    <th scope="row" className="weekly-overview-row-header">
-                      <div className="weekly-overview-employee">
-                        <div className="weekly-overview-employee-topline">
-                          <div
-                            className="weekly-overview-avatar"
-                            style={{
-                              '--weekly-overview-avatar-color': employeeAvatarColor,
-                            }}
-                            aria-hidden="true"
-                          >
-                            <span className="weekly-overview-avatar-label">
-                              {employeeAvatarLabel}
-                            </span>
-                            <span className="weekly-overview-avatar-index">
-                              {String(index + 1).padStart(2, '0')}
-                            </span>
-                          </div>
+                  return (
+                    <tr
+                      key={employee.id}
+                      className={`weekly-overview-row${
+                        selectedEmployeeId === employee.id ? ' weekly-overview-row-selected' : ''
+                      }`}
+                    >
+                      <th scope="row" className="weekly-overview-row-header">
+                        <div className="weekly-overview-employee">
+                          <div className="weekly-overview-employee-topline">
+                            <div
+                              className="weekly-overview-avatar"
+                              style={{
+                                '--weekly-overview-avatar-color': employeeAvatarColor,
+                              }}
+                              aria-hidden="true"
+                            >
+                              <span className="weekly-overview-avatar-label">
+                                {employeeAvatarLabel}
+                              </span>
+                              <span className="weekly-overview-avatar-index">
+                                {String(index + 1).padStart(2, '0')}
+                              </span>
+                            </div>
 
-                          <div className="weekly-overview-employee-copy">
-                            <strong>{employeeLabel}</strong>
-                            <div className="weekly-overview-employee-meta">
-                              <span>{formatAssignmentCount(summary.assignmentCount)}</span>
-                              <span>{formatHourCount(summary.totalHours)}</span>
+                            <div className="weekly-overview-employee-copy">
+                              <strong>{employeeLabel}</strong>
+                              <div className="weekly-overview-employee-meta">
+                                <span>{formatAssignmentCount(summary.assignmentCount)}</span>
+                                <span>{formatHourCount(summary.totalHours)}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </th>
+
+                      {weekdays.map((day) => {
+                        const dayEntries = entriesByEmployeeId[employee.id]?.[day] ?? []
+
+                        return (
+                          <td key={`${employee.id}-${day}`} className="weekly-overview-cell">
+                            {dayEntries.length > 0 ? (
+                              <div className="weekly-overview-assignment-list">
+                                {dayEntries.map((entry) => {
+                                  const customer = customersById[entry.customer_id]
+                                  const startTime = getScheduleEntryStartTime(entry)
+                                  const endTime = getScheduleEntryEndTime(entry)
+                                  const customerLabel =
+                                    customer?.name ?? `Kunde #${entry.customer_id}`
+
+                                  return (
+                                    <article
+                                      key={entry.id}
+                                      className="weekly-overview-assignment"
+                                      style={{
+                                        '--weekly-overview-accent': customer?.color ?? '#334155',
+                                      }}
+                                      title={`${employeeLabel} · ${day} · ${startTime} - ${endTime} · ${customerLabel}${
+                                        customer?.address ? ` · ${customer.address}` : ''
+                                      }`}
+                                    >
+                                      <span className="weekly-overview-assignment-time">
+                                        {startTime} - {endTime}
+                                      </span>
+                                      <strong className="weekly-overview-assignment-name">
+                                        {customerLabel}
+                                      </strong>
+                                    </article>
+                                  )
+                                })}
+                              </div>
+                            ) : (
+                              <span className="weekly-overview-empty">frei</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="weekly-overview-print-sheet" aria-hidden="true">
+            <header className="weekly-overview-print-header">
+              <strong className="weekly-overview-print-title">Wochenübersicht</strong>
+              <div className="weekly-overview-print-meta">
+                <span>
+                  <strong>KW</strong> {calendarWeek}
+                </span>
+                <span>
+                  <strong>Jahr</strong> {year}
+                </span>
+                <span>
+                  <strong>Datum</strong> {scheduleDateRangeLabel || '-'}
+                </span>
+                <span>
+                  <strong>Mitarbeiter</strong> {String(employees.length).padStart(2, '0')}
+                </span>
+                <span>
+                  <strong>Einsätze</strong> {String(totalAssignments).padStart(2, '0')}
+                </span>
+              </div>
+            </header>
+
+            <table className="weekly-overview-print-table">
+              <colgroup>
+                <col className="weekly-overview-print-col-employee" />
+                {weekdays.map((day) => (
+                  <col key={`print-col-${day}`} className="weekly-overview-print-col-day" />
+                ))}
+              </colgroup>
+
+              <thead>
+                <tr>
+                  <th scope="col">Mitarbeiter</th>
+                  {weekdays.map((day) => (
+                    <th key={`print-${day}`} scope="col">
+                      {day}
                     </th>
+                  ))}
+                </tr>
+              </thead>
 
-                    {weekdays.map((day) => {
-                      const dayEntries = entriesByEmployeeId[employee.id]?.[day] ?? []
+              <tbody>
+                {employees.map((employee) => {
+                  const employeeLabel = getEmployeeDisplayName(employee)
+                  const summary = summariesByEmployeeId[employee.id] ?? {
+                    assignmentCount: 0,
+                    totalHours: 0,
+                  }
 
-                      return (
-                        <td key={`${employee.id}-${day}`} className="weekly-overview-cell">
-                          {dayEntries.length > 0 ? (
-                            <div className="weekly-overview-assignment-list">
-                              {dayEntries.map((entry) => {
-                                const customer = customersById[entry.customer_id]
-                                const startTime = getScheduleEntryStartTime(entry)
-                                const endTime = getScheduleEntryEndTime(entry)
-                                const customerLabel = customer?.name ?? `Kunde #${entry.customer_id}`
+                  return (
+                    <tr key={`print-${employee.id}`}>
+                      <th scope="row" className="weekly-overview-print-employee-cell">
+                        <strong>{employeeLabel}</strong>
+                        <span>
+                          {formatAssignmentCount(summary.assignmentCount)} ·{' '}
+                          {formatHourCount(summary.totalHours)}
+                        </span>
+                      </th>
 
-                                return (
-                                  <article
-                                    key={entry.id}
-                                    className="weekly-overview-assignment"
-                                    style={{
-                                      '--weekly-overview-accent': customer?.color ?? '#334155',
-                                    }}
-                                    title={`${employeeLabel} · ${day} · ${startTime} - ${endTime} · ${customerLabel}${
-                                      customer?.address ? ` · ${customer.address}` : ''
-                                    }`}
-                                  >
-                                    <span className="weekly-overview-assignment-time">
-                                      {startTime} - {endTime}
-                                    </span>
-                                    <strong className="weekly-overview-assignment-name">
-                                      {customerLabel}
-                                    </strong>
-                                  </article>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <span className="weekly-overview-empty">frei</span>
-                          )}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                      {weekdays.map((day) => {
+                        const dayEntries = entriesByEmployeeId[employee.id]?.[day] ?? []
+
+                        return (
+                          <td
+                            key={`print-${employee.id}-${day}`}
+                            className="weekly-overview-print-cell"
+                          >
+                            {dayEntries.length > 0 ? (
+                              <div className="weekly-overview-print-assignment-list">
+                                {dayEntries.map((entry) => {
+                                  const customer = customersById[entry.customer_id]
+                                  const startTime = getScheduleEntryStartTime(entry)
+                                  const endTime = getScheduleEntryEndTime(entry)
+                                  const customerLabel =
+                                    customer?.name ?? `Kunde #${entry.customer_id}`
+
+                                  return (
+                                    <article
+                                      key={`print-entry-${entry.id}`}
+                                      className="weekly-overview-print-assignment"
+                                      style={{
+                                        '--weekly-overview-print-accent':
+                                          customer?.color ?? '#334155',
+                                      }}
+                                    >
+                                      <span className="weekly-overview-print-assignment-time">
+                                        {startTime} - {endTime}
+                                      </span>
+                                      <strong>{customerLabel}</strong>
+                                    </article>
+                                  )
+                                })}
+                              </div>
+                            ) : (
+                              <span className="weekly-overview-print-empty">-</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   )

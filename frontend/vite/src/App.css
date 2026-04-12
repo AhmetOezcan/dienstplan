@@ -824,6 +824,12 @@ button:not(:disabled) {
   gap: 8px;
 }
 
+.widget-print-button {
+  min-height: 38px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
 .widget-count-pill {
   min-width: 40px;
   height: 38px;
@@ -1078,6 +1084,127 @@ button:not(:disabled) {
 .weekly-overview-table tbody tr:last-child .weekly-overview-row-header,
 .weekly-overview-table tbody tr:last-child .weekly-overview-cell {
   border-bottom: none;
+}
+
+.weekly-overview-print-sheet {
+  display: none;
+}
+
+.weekly-overview-print-assignment-list,
+.weekly-overview-print-employee-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.weekly-overview-print-header {
+  display: block;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.weekly-overview-print-title {
+  display: block;
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+
+.weekly-overview-print-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 0.7rem;
+  color: #334155;
+}
+
+.weekly-overview-print-meta strong {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.weekly-overview-print-header {
+  width: 100%;
+}
+
+.weekly-overview-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.weekly-overview-print-col-employee {
+  width: 190px;
+}
+
+.weekly-overview-print-col-day {
+  width: calc((100% - 190px) / 7);
+}
+
+.weekly-overview-print-table th,
+.weekly-overview-print-table td {
+  border: 1px solid #cbd5e1;
+  padding: 6px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.weekly-overview-print-table thead th {
+  background: #eef2f7;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.weekly-overview-print-employee-cell {
+  gap: 2px;
+  background: #f8fafc;
+}
+
+.weekly-overview-print-table thead th:first-child,
+.weekly-overview-print-employee-cell {
+  border-right: 2px solid #94a3b8;
+}
+
+.weekly-overview-print-employee-cell strong {
+  font-size: 0.8rem;
+}
+
+.weekly-overview-print-employee-cell span {
+  font-size: 0.68rem;
+  color: #475569;
+}
+
+.weekly-overview-print-cell {
+  font-size: 0.68rem;
+}
+
+.weekly-overview-print-assignment-list {
+  gap: 4px;
+}
+
+.weekly-overview-print-assignment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 4px 4px 6px;
+  border-left: 3px solid var(--weekly-overview-print-accent, var(--accent));
+  background: #ffffff;
+}
+
+.weekly-overview-print-assignment-time {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #475569;
+}
+
+.weekly-overview-print-empty {
+  color: #64748b;
+  font-weight: 600;
 }
 
 .hours-chart-shell {
@@ -2008,14 +2135,21 @@ button:not(:disabled) {
 
 @media print {
   body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
     background: #ffffff;
   }
 
   .dashboard-header,
+  .dashboard-intro,
   .status-message,
   .planner-drag-ghost,
   .planner-entry-delete,
-  .planner-entry-resize-handle {
+  .planner-entry-resize-handle,
+  .widget-print-button {
     display: none !important;
   }
 
@@ -2035,6 +2169,58 @@ button:not(:disabled) {
   .dashboard-widget-grid {
     display: block;
     padding: 0;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .dashboard-widget-grid > :not(#wochenuebersicht-widget) {
+    display: none !important;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-board {
+    display: none !important;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .widget-topline {
+    display: none !important;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-sheet {
+    display: flex !important;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  body[data-print-target='dienstplan-widget'] .dashboard-widget-grid > :not(.planning-workspace-layout),
+  body[data-print-target='dienstplan-widget'] .planning-workspace-sidebar {
+    display: none !important;
+  }
+
+  body[data-print-target='dienstplan-widget'] .planning-workspace-layout {
+    display: block;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] #wochenuebersicht-widget,
+  body[data-print-target='dienstplan-widget'] #dienstplan-widget {
+    width: 100%;
+    margin: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table {
+    font-size: 10px;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table thead {
+    display: table-header-group;
+  }
+
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table tr,
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table td,
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table th,
+  body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-assignment {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .weekly-overview-board {

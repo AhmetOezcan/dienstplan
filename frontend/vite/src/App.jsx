@@ -195,9 +195,8 @@ function formatIsoDate(date) {
   return `${year}-${month}-${day}`
 }
 
-function getCurrentCalendarWeekState() {
-  const today = new Date()
-  const utcDate = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))
+function getIsoCalendarWeekState(date) {
+  const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
   const isoDayNumber = utcDate.getUTCDay() || 7
 
   utcDate.setUTCDate(utcDate.getUTCDate() + 4 - isoDayNumber)
@@ -209,6 +208,21 @@ function getCurrentCalendarWeekState() {
     year: utcDate.getUTCFullYear(),
     calendarWeek: Math.ceil(dayOfYear / 7),
   }
+}
+
+function getCurrentCalendarWeekState() {
+  return getIsoCalendarWeekState(new Date())
+}
+
+function getPreviousCalendarWeekState(year, calendarWeek) {
+  const weekStart = getStartDateOfIsoWeek(year, calendarWeek)
+  if (!weekStart) {
+    return null
+  }
+
+  const previousWeekDate = new Date(weekStart)
+  previousWeekDate.setUTCDate(previousWeekDate.getUTCDate() - 7)
+  return getIsoCalendarWeekState(previousWeekDate)
 }
 
 function formatCurrentDateLabel(date) {
@@ -1749,6 +1763,85 @@ function App() {
     )
   }
 
+  const copyPreviousWeekScheduleEntries = async () => {
+    if (isSavingSchedule) {
+      return
+    }
+
+    if (selectedEmployeeId === null) {
+      setLoadError('Bitte zuerst einen Mitarbeiter auswählen.')
+      return
+    }
+
+    const previousWeekState = getPreviousCalendarWeekState(year, calendarWeek)
+    if (!previousWeekState) {
+      setLoadError('Die Vorwoche konnte nicht ermittelt werden.')
+      return
+    }
+
+    const previousWeekEntries = scheduleEntries.filter(
+      (entry) =>
+        entry.employee_id === selectedEmployeeId &&
+        isIsoDateInCalendarWeek(
+          getScheduleEntryDate(entry),
+          previousWeekState.year,
+          previousWeekState.calendarWeek,
+        ),
+    )
+
+    if (previousWeekEntries.length === 0) {
+      setLoadError(
+        `In KW ${previousWeekState.calendarWeek}/${previousWeekState.year} sind keine Einsätze für ${selectedEmployeeLabel}.`,
+      )
+      return
+    }
+
+    const shouldReplaceExisting = scheduleEntriesForCurrentView.length > 0
+    if (
+      shouldReplaceExisting &&
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        `KW ${calendarWeek}/${year} enthält bereits ${scheduleEntriesForCurrentView.length} Einsätze für ${selectedEmployeeLabel}. Soll die Woche mit KW ${previousWeekState.calendarWeek}/${previousWeekState.year} überschrieben werden?`,
+      )
+    ) {
+      return
+    }
+
+    const targetWeekEntryIds = new Set(scheduleEntriesForCurrentView.map((entry) => entry.id))
+
+    setIsSavingSchedule(true)
+
+    try {
+      const copiedEntries = await apiRequest('/schedule_entries/actions/copy_previous_week', {
+        method: 'POST',
+        accessToken: authToken,
+        body: JSON.stringify({
+          employee_id: selectedEmployeeId,
+          year,
+          calendar_week: calendarWeek,
+          replace_existing: shouldReplaceExisting,
+        }),
+      })
+
+      setScheduleEntries((currentEntries) =>
+        sortScheduleEntries([
+          ...currentEntries.filter((entry) => !targetWeekEntryIds.has(entry.id)),
+          ...copiedEntries,
+        ]),
+      )
+      setLoadError('')
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
+        return
+      }
+
+      setLoadError(error.message || 'Vorwoche konnte nicht übernommen werden.')
+    } finally {
+      setIsSavingSchedule(false)
+    }
+  }
+
   const deleteScheduleEntry = async (entryId) => {
     if (isSavingSchedule) {
       return
@@ -2095,12 +2188,15 @@ function App() {
         {isScheduleSectionActive ? (
           <section className="dashboard-widget-grid">
             <WeeklyOverviewWidget
+              calendarWeek={calendarWeek}
               customersById={customersById}
               dashboardWeekLabel={dashboardWeekLabel}
               employees={employees}
+              scheduleDateRangeLabel={scheduleDateRangeLabel}
               scheduleEntries={scheduleEntriesForSelectedWeek}
               selectedEmployeeId={selectedEmployeeId}
               weekdays={weekdays}
+              year={year}
             />
 
             <PlanningWorkspace
@@ -2114,6 +2210,7 @@ function App() {
               isSavingSchedule={isSavingSchedule}
               onAddCustomerToWidget={addCustomerToWidget}
               onCalendarWeekChange={setCalendarWeek}
+              onCopyPreviousWeek={copyPreviousWeekScheduleEntries}
               onCreateScheduleEntry={createScheduleEntry}
               onDeleteScheduleEntry={deleteScheduleEntry}
               onMoveScheduleEntry={moveScheduleEntry}

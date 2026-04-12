@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +11,12 @@ from app.models.customer import Customer
 from app.models.employee import Employee
 from app.models.schedule_entry import ScheduleEntry
 from app.models.user import User
-from app.schemas.schedule import ScheduleEntryCreate, ScheduleEntryRead, ScheduleEntryUpdate
+from app.schemas.schedule import (
+    ScheduleCopyPreviousWeekRequest,
+    ScheduleEntryCreate,
+    ScheduleEntryRead,
+    ScheduleEntryUpdate,
+)
 from app.security import get_auth_context, get_current_account, get_current_user
 
 router = APIRouter(dependencies=[Depends(get_auth_context)])
@@ -58,6 +65,18 @@ def validate_schedule_times(start_time, end_time) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="start_time must be earlier than end_time",
         )
+
+
+def get_iso_week_bounds(year: int, calendar_week: int):
+    try:
+        first_day = date.fromisocalendar(year, calendar_week, 1)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ISO week selection",
+        ) from exc
+
+    return first_day, first_day + timedelta(days=6)
 
 
 @router.get("/schedule", response_model=list[ScheduleEntryRead])
@@ -126,6 +145,106 @@ def create_schedule_entry(
 
     db.refresh(schedule_entry)
     return schedule_entry
+
+
+@router.post(
+    "/schedule_entries/actions/copy_previous_week",
+    response_model=list[ScheduleEntryRead],
+    status_code=status.HTTP_201_CREATED,
+)
+@router.post(
+    "/schedule-entries/actions/copy_previous_week",
+    response_model=list[ScheduleEntryRead],
+    status_code=status.HTTP_201_CREATED,
+)
+def copy_previous_week_schedule_entries(
+    payload: ScheduleCopyPreviousWeekRequest,
+    db: Session = Depends(get_db),
+    current_account: Account = Depends(get_current_account),
+    current_user: User = Depends(get_current_user),
+):
+    if db.scalar(
+        select(Employee).where(
+            Employee.id == payload.employee_id,
+            Employee.account_id == current_account.id,
+        )
+    ) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Referenced employee does not exist in your account",
+        )
+
+    target_week_start, target_week_end = get_iso_week_bounds(payload.year, payload.calendar_week)
+    source_week_start = target_week_start - timedelta(days=7)
+    source_week_end = target_week_end - timedelta(days=7)
+
+    source_entries = db.scalars(
+        select(ScheduleEntry)
+        .where(
+            ScheduleEntry.account_id == current_account.id,
+            ScheduleEntry.employee_id == payload.employee_id,
+            ScheduleEntry.date >= source_week_start,
+            ScheduleEntry.date <= source_week_end,
+        )
+        .order_by(
+            ScheduleEntry.date.asc(),
+            ScheduleEntry.start_time.asc(),
+            ScheduleEntry.id.asc(),
+        )
+    ).all()
+
+    if not source_entries:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No schedule entries found in the previous calendar week",
+        )
+
+    existing_target_entries = db.scalars(
+        select(ScheduleEntry).where(
+            ScheduleEntry.account_id == current_account.id,
+            ScheduleEntry.employee_id == payload.employee_id,
+            ScheduleEntry.date >= target_week_start,
+            ScheduleEntry.date <= target_week_end,
+        )
+    ).all()
+
+    if existing_target_entries and not payload.replace_existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Target calendar week already contains schedule entries",
+        )
+
+    for entry in existing_target_entries:
+        db.delete(entry)
+
+    copied_entries = []
+    for entry in source_entries:
+        copied_entry = ScheduleEntry(
+            account_id=current_account.id,
+            employee_id=entry.employee_id,
+            customer_id=entry.customer_id,
+            date=entry.date + timedelta(days=7),
+            start_time=entry.start_time,
+            end_time=entry.end_time,
+            notes=entry.notes,
+            created_by_user_id=current_user.id,
+        )
+        db.add(copied_entry)
+        copied_entries.append(copied_entry)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Previous calendar week could not be copied",
+        ) from None
+
+    for entry in copied_entries:
+        db.refresh(entry)
+
+    return copied_entries
 
 
 @router.patch("/schedule_entries/{schedule_entry_id}", response_model=ScheduleEntryRead)

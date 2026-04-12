@@ -53,7 +53,16 @@ def create_customer(
 ):
     customer = Customer(account_id=current_account.id, **payload.model_dump())
     db.add(customer)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer could not be created",
+        ) from None
+
     db.refresh(customer)
     return customer
 
@@ -71,7 +80,15 @@ def update_customer(
     for field, value in updates.items():
         setattr(customer, field, value)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer could not be updated",
+        ) from None
+
     db.refresh(customer)
     return customer
 

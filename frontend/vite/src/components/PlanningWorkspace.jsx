@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { printSection } from '../utils/printSection'
 
 const DEFAULT_PLANNER_ROW_HEIGHT = 48
 const PLANNER_HEADER_HEIGHT = 58
@@ -97,6 +98,7 @@ function PlanningWorkspace({
   isSavingSchedule,
   onAddCustomerToWidget,
   onCalendarWeekChange,
+  onCopyPreviousWeek,
   onCreateScheduleEntry,
   onDeleteScheduleEntry,
   onMoveScheduleEntry,
@@ -469,9 +471,26 @@ function PlanningWorkspace({
               {scheduleDateRangeLabel || 'Bitte eine gültige Kalenderwoche wählen.'}
             </p>
           </div>
-          <span className="widget-count-pill widget-count-pill-accent">
-            {String(scheduledAssignmentsCount).padStart(2, '0')}
-          </span>
+          <div className="widget-topline-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={selectedEmployeeId === null || isSavingSchedule}
+              onClick={onCopyPreviousWeek}
+            >
+              {isSavingSchedule ? 'Speichert...' : 'Vorwoche übernehmen'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button widget-print-button"
+              onClick={() => printSection('dienstplan-widget')}
+            >
+              Drucken
+            </button>
+            <span className="widget-count-pill widget-count-pill-accent">
+              {String(scheduledAssignmentsCount).padStart(2, '0')}
+            </span>
+          </div>
         </div>
 
         <div className="schedule-meta-row">
@@ -573,9 +592,11 @@ function PlanningWorkspace({
                             color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
                           }}
                         >
-                          <span className="planner-entry-chip">
-                            {interaction?.mode === 'resize' ? 'Resize' : 'Vorschau'}
-                          </span>
+                          {previewSpan !== 2 ? (
+                            <span className="planner-entry-chip">
+                              {interaction?.mode === 'resize' ? 'Resize' : 'Vorschau'}
+                            </span>
+                          ) : null}
                           <strong className="planner-entry-name">
                             {activePreviewCustomer?.name ?? 'Einsatz'}
                           </strong>
@@ -595,7 +616,9 @@ function PlanningWorkspace({
                           const endIndex = getTimeIndex(endTime)
                           const span = Math.max(endIndex - startIndex, 1)
                           const isCompactEntry = span === 1
-                          const showExtendedScheduleInfo = span >= 2
+                          const showDurationChip = span >= 3
+                          const showTimeRange = span >= 2
+                          const showAddress = span >= 3
                           const isMovingEntry =
                             interaction?.mode === 'move' && interaction.entryId === entry.id
                           const isResizingEntry =
@@ -620,7 +643,7 @@ function PlanningWorkspace({
                               }`}
                               onPointerDown={(event) => handleEntryPointerDown(entry, event)}
                             >
-                              {showExtendedScheduleInfo ? (
+                              {showDurationChip ? (
                                 <div className="planner-entry-topline">
                                   <span className="planner-entry-chip">
                                     {formatDurationLabel(startTime, endTime, getTimeIndex)}
@@ -639,12 +662,12 @@ function PlanningWorkspace({
                               <strong className="planner-entry-name">
                                 {customer?.name ?? `Kunde #${entry.customer_id}`}
                               </strong>
-                              {showExtendedScheduleInfo ? (
+                              {showTimeRange ? (
                                 <span className="planner-entry-time">
                                   {startTime} - {endTime}
                                 </span>
                               ) : null}
-                              {customer?.address && !isCompactEntry ? (
+                              {customer?.address && showAddress && !isCompactEntry ? (
                                 <span className="planner-entry-address">{customer.address}</span>
                               ) : null}
                               <button

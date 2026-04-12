@@ -39,6 +39,13 @@ class ScheduleEntryCreate(ScheduleEntryBase):
     pass
 
 
+class ScheduleCopyPreviousWeekRequest(BaseModel):
+    employee_id: int
+    year: int
+    calendar_week: int
+    replace_existing: bool = False
+
+
 class ScheduleEntryUpdate(BaseModel):
     employee_id: int | None = None
     customer_id: int | None = None

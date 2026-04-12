@@ -1,5 +1,6 @@
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -20,6 +22,10 @@ class Employee(Base):
     __tablename__ = "employees"
     __table_args__ = (
         UniqueConstraint("account_id", "id", name="uq_employees_account_id_id"),
+        CheckConstraint(
+            "char_length(btrim(first_name)) > 0",
+            name="ck_employees_first_name_not_blank",
+        ),
         ForeignKeyConstraint(
             ["account_id", "user_id"],
             [
@@ -43,7 +49,7 @@ class Employee(Base):
     last_name = Column(String(100), nullable=False)
     phone = Column(String(50), nullable=True)
     notes = Column(Text, nullable=True)
-    is_active = Column(Boolean, nullable=False, default=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     account = relationship("Account", back_populates="employees")
