@@ -920,99 +920,95 @@ function CustomerManagementSection({
   )
 }
 
-function LegalSection({ activeSection, accountName, onBackToSchedule }) {
-  const legalEntityName =
-    typeof accountName === 'string' && accountName.trim()
-      ? accountName.trim()
-      : '[Firmenname ergänzen]'
+function LegalSection({ activeSection, onBackToSchedule }) {
+  const imprintProviderName = 'Ahmet Özcan e. U.'
+  const imprintAddressLineOne = 'Josef-Ressel-Straße 20'
+  const imprintAddressLineTwo = '5020 Salzburg, Österreich'
+  const imprintEmail = 'ahmetzcan1@outlook.com'
+  const imprintPhone = '+436602274556'
 
   const legalPageContentBySection = {
     'legal-imprint': {
       title: 'Impressum',
-      intro:
-        'Basismuster für Anbieterkennzeichnung und Offenlegung in Österreich. Alle Platzhalter vor dem Livegang durch echte Unternehmensdaten ersetzen.',
+      intro: 'Anbieterkennzeichnung für Ordo Cloud.',
       cards: [
         {
           title: 'Anbieter',
           lines: [
-            legalEntityName,
-            '[Unternehmensform ergänzen]',
-            '[Straße und Hausnummer]',
-            '[PLZ Ort, Österreich]',
+            imprintProviderName,
+            imprintAddressLineOne,
+            imprintAddressLineTwo,
           ],
         },
         {
           title: 'Kontakt',
-          lines: ['E-Mail: [office@firma.at]', 'Telefon: [+43 ...]', 'Web: https://[domain]'],
-        },
-        {
-          title: 'Unternehmensangaben',
-          lines: [
-            'Firmenbuchnummer: [FN ...]',
-            'Firmenbuchgericht: [Gericht ergänzen]',
-            'UID: [ATU ...]',
-            'Aufsichtsbehörde oder Kammer: [falls einschlägig]',
-          ],
+          lines: [`E-Mail: ${imprintEmail}`, `Telefon: ${imprintPhone}`],
         },
         {
           title: 'Vertretung und Blattlinie',
           lines: [
-            'Vertretungsbefugte Person: [Geschäftsführung ergänzen]',
+            `Vertretungsbefugte Person: ${imprintProviderName}`,
             'Tätigkeitsbereich: Cloud-Software für Dienst- und Einsatzplanung',
             'Blattlinie: Informationen und Funktionen rund um Ordo Cloud',
           ],
         },
       ],
-      footnote:
-        'Wenn ihr redaktionelle Inhalte oder regelmäßige Newsletter veröffentlicht, sind zusätzliche Offenlegungsangaben zu prüfen.',
     },
     'legal-privacy': {
       title: 'Datenschutz',
       intro:
-        'Dieses Muster deckt die üblichen DSGVO-Bausteine für die App ab. Es muss an eure echten Prozesse, Dienstleister und Speicherfristen angepasst werden.',
+        'Diese Datenschutzerklärung beschreibt den im Quellcode und im aktuellen Deployment erkennbaren Stand von Ordo Cloud.',
       cards: [
         {
           title: 'Verantwortlicher',
           lines: [
-            `${legalEntityName} ist Verantwortlicher für die Verarbeitung personenbezogener Daten in Ordo Cloud.`,
-            'Kontakt: [privacy@firma.at] oder [Postanschrift ergänzen]',
+            `${imprintProviderName} ist Verantwortlicher für die Verarbeitung personenbezogener Daten in Ordo Cloud.`,
+            imprintAddressLineOne,
+            imprintAddressLineTwo,
+            `E-Mail: ${imprintEmail}`,
+            `Telefon: ${imprintPhone}`,
           ],
         },
         {
           title: 'Verarbeitete Daten',
           bullets: [
-            'Kontodaten wie Name, E-Mail-Adresse und Rollen',
-            'Mitarbeiter-, Kunden- und Einsatzdaten, die in der App erfasst werden',
-            'Technische Protokolle zur Sicherheit, Fehleranalyse und Betriebsstabilität',
+            'Kontodaten wie E-Mail-Adresse, Name, Account-Zuordnung und Rolleninformationen',
+            'Anmeldedaten wie Passwort-Hash, Authentifizierungs-Token sowie Daten zu fehlgeschlagenen Login-Versuchen einschließlich IP-Adresse und Zeitstempeln zur Absicherung des Zugangs',
+            'Mitarbeiterdaten wie Vorname, Nachname, Telefonnummer und Notizen',
+            'Kundendaten wie Name, Adresse, Farbcodierung und Notizen',
+            'Planungsdaten wie Mitarbeiter- und Kundenbezug, Datum, Start- und Endzeit, optionale Notizen sowie Ersteller- und Änderungszeitpunkte',
+            'Technische Nutzungsdaten im Browser, insbesondere die gespeicherte Anmeldung und die Auswahl im Kunden-Widget im Local Storage',
           ],
         },
         {
           title: 'Zwecke und Rechtsgrundlagen',
           bullets: [
-            'Bereitstellung der App und Vertragsabwicklung',
-            'Organisation von Dienstplanung und Einsatzverwaltung',
-            'Sicherheits- und Missbrauchsprävention sowie gesetzliche Nachweise',
+            'Bereitstellung der Anwendung, Nutzeranmeldung und Kontoverwaltung auf Grundlage von Art. 6 Abs. 1 lit. b DSGVO',
+            'Organisation von Dienstplanung, Mitarbeiterverwaltung und Kundenverwaltung auf Grundlage von Art. 6 Abs. 1 lit. b DSGVO',
+            'IT-Sicherheit, Missbrauchsabwehr und Begrenzung fehlgeschlagener Logins auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO',
+            'Erfüllung gesetzlicher Aufbewahrungs- und Nachweispflichten, soweit einschlägig, auf Grundlage von Art. 6 Abs. 1 lit. c DSGVO',
           ],
         },
         {
           title: 'Empfänger und Speicherfristen',
           bullets: [
-            'Hosting-, Infrastruktur- und Support-Dienstleister nur im erforderlichen Umfang',
-            'Speicherung solange dies für Vertrag, Betrieb, Nachweis oder gesetzliche Pflichten nötig ist',
-            'Lösch- oder Anonymisierungskonzept für Alt- und Testdaten ergänzen',
+            'Das Frontend wird nach aktueller Deployment-Konfiguration über Vercel ausgeliefert; API-Anfragen werden an eine Railway-Instanz weitergeleitet.',
+            'Eine Weitergabe an technische Dienstleister erfolgt nur, soweit dies für Hosting, Auslieferung der Website, Betrieb der API, Datenbankbetrieb oder gesetzliche Verpflichtungen erforderlich ist.',
+            'Kontodaten, Mitarbeiterdaten, Kundendaten und Planungsdaten bleiben grundsätzlich gespeichert, solange sie für den Betrieb der Anwendung, die Vertragsdurchführung oder berechtigte Nachweisinteressen benötigt werden.',
+            'Daten zur Abwehr von Login-Missbrauch werden nach aktuellem Code regelmäßig bereinigt; veraltete Einträge werden spätestens nach 24 Stunden gelöscht.',
+            'Im Browser gespeicherte Daten bleiben bestehen, bis ein Logout erfolgt, der Local Storage gelöscht wird oder neue Daten die bisherigen Einträge ersetzen.',
           ],
         },
         {
           title: 'Betroffenenrechte',
           bullets: [
-            'Auskunft, Berichtigung, Löschung und Einschränkung',
-            'Datenübertragbarkeit und Widerspruch, soweit anwendbar',
+            'Sie haben insbesondere das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Verarbeitung Ihrer personenbezogenen Daten.',
+            'Soweit die gesetzlichen Voraussetzungen vorliegen, besteht außerdem ein Recht auf Datenübertragbarkeit sowie ein Widerspruchsrecht gegen Verarbeitungen auf Grundlage berechtigter Interessen.',
+            `Zur Ausübung Ihrer Rechte genügt eine formlose Nachricht an ${imprintEmail}.`,
             'Beschwerde bei der Österreichischen Datenschutzbehörde, Barichgasse 40-42, 1030 Wien',
           ],
         },
       ],
-      footnote:
-        'Wenn externe Dienste wie E-Mail, Analytics, Karten, Videos oder Support-Tools eingebunden werden, müssen diese hier konkret genannt werden.',
     },
     'legal-cookies': {
       title: 'Cookies und Endgerätespeicher',
@@ -1094,7 +1090,9 @@ function LegalSection({ activeSection, accountName, onBackToSchedule }) {
           ))}
         </div>
 
-        <p className="panel-note legal-footnote">{pageContent.footnote}</p>
+        {pageContent.footnote ? (
+          <p className="panel-note legal-footnote">{pageContent.footnote}</p>
+        ) : null}
       </section>
     </section>
   )
@@ -2358,7 +2356,6 @@ function App() {
         {isLegalSectionActive ? (
           <LegalSection
             activeSection={activeDashboardSection}
-            accountName={currentAccount?.name ?? ''}
             onBackToSchedule={() => navigateToDashboardSection('schedule')}
           />
         ) : null}
