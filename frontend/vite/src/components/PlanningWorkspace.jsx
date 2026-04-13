@@ -9,6 +9,8 @@ import {
 
 const AUTO_SCROLL_EDGE = 72
 const AUTO_SCROLL_STEP = 22
+const WINDOW_AUTO_SCROLL_EDGE = 72
+const WINDOW_AUTO_SCROLL_STEP = 18
 const DRAG_ACTIVATION_DISTANCE = 6
 
 function getScheduleEntryDay(entry) {
@@ -126,6 +128,8 @@ function PlanningWorkspace({
   const [editorDraft, setEditorDraft] = useState(null)
   const scrollAreaRef = useRef(null)
   const boardRef = useRef(null)
+  const dragPointerRef = useRef({ x: 0, y: 0 })
+  const autoScrollFrameRef = useRef(0)
 
   const scheduledAssignmentsCount = scheduleEntries.length
   const isPlannerInteractive = selectedEmployeeId !== null && !isSavingSchedule
@@ -218,35 +222,61 @@ function PlanningWorkspace({
 
   const editorValidation = editorDraft ? getEditorValidation(editorDraft) : null
 
-  const maybeAutoScroll = (clientX, clientY) => {
-    const scrollElement = scrollAreaRef.current
-    if (!scrollElement) {
-      return
-    }
-
+  const getAutoScrollDelta = (scrollElement, clientX, clientY) => {
     const scrollRect = scrollElement.getBoundingClientRect()
     let leftDelta = 0
     let topDelta = 0
 
-    if (clientX < scrollRect.left + AUTO_SCROLL_EDGE) {
+    if (clientX < scrollRect.left + AUTO_SCROLL_EDGE && scrollElement.scrollLeft > 0) {
       leftDelta = -AUTO_SCROLL_STEP
-    } else if (clientX > scrollRect.right - AUTO_SCROLL_EDGE) {
+    } else if (
+      clientX > scrollRect.right - AUTO_SCROLL_EDGE &&
+      scrollElement.scrollLeft < scrollElement.scrollWidth - scrollElement.clientWidth
+    ) {
       leftDelta = AUTO_SCROLL_STEP
     }
 
-    if (clientY < scrollRect.top + AUTO_SCROLL_EDGE) {
+    if (clientY < scrollRect.top + AUTO_SCROLL_EDGE && scrollElement.scrollTop > 0) {
       topDelta = -AUTO_SCROLL_STEP
-    } else if (clientY > scrollRect.bottom - AUTO_SCROLL_EDGE) {
+    } else if (
+      clientY > scrollRect.bottom - AUTO_SCROLL_EDGE &&
+      scrollElement.scrollTop < scrollElement.scrollHeight - scrollElement.clientHeight
+    ) {
       topDelta = AUTO_SCROLL_STEP
     }
 
-    if (leftDelta !== 0 || topDelta !== 0) {
-      scrollElement.scrollBy({
-        left: leftDelta,
-        top: topDelta,
-      })
+    return {
+      leftDelta,
+      topDelta,
     }
   }
+
+  const getWindowAutoScrollDelta = (clientY) => {
+    if (typeof window === 'undefined') {
+      return 0
+    }
+
+    const documentHeight = document.documentElement.scrollHeight
+    const canScrollUp = window.scrollY > 0
+    const canScrollDown = window.scrollY + window.innerHeight < documentHeight
+
+    if (clientY < WINDOW_AUTO_SCROLL_EDGE && canScrollUp) {
+      return -WINDOW_AUTO_SCROLL_STEP
+    }
+
+    if (clientY > window.innerHeight - WINDOW_AUTO_SCROLL_EDGE && canScrollDown) {
+      return WINDOW_AUTO_SCROLL_STEP
+    }
+
+    return 0
+  }
+
+  const stopAutoScroll = useEffectEvent(() => {
+    if (autoScrollFrameRef.current) {
+      window.cancelAnimationFrame(autoScrollFrameRef.current)
+      autoScrollFrameRef.current = 0
+    }
+  })
 
   const getPlacementPreviewFromPointer = (clientX, clientY) => {
     const boardElement = boardRef.current
@@ -275,9 +305,80 @@ function PlanningWorkspace({
     }
   }
 
+  const syncPreviewPlacement = useEffectEvent((clientX, clientY) => {
+    const nextPreview = getPlacementPreviewFromPointer(clientX, clientY)
+    setPreviewPlacement((currentPreview) =>
+      isSamePreview(currentPreview, nextPreview) ? currentPreview : nextPreview,
+    )
+  })
+
+  const runAutoScroll = useEffectEvent(function continueAutoScroll() {
+    autoScrollFrameRef.current = 0
+
+    if (!interaction?.dragActivated) {
+      return
+    }
+
+    const scrollElement = scrollAreaRef.current
+    if (!scrollElement) {
+      return
+    }
+
+    const { x, y } = dragPointerRef.current
+    const { leftDelta, topDelta } = getAutoScrollDelta(scrollElement, x, y)
+    const windowTopDelta = topDelta === 0 ? getWindowAutoScrollDelta(y) : 0
+
+    if (leftDelta === 0 && topDelta === 0 && windowTopDelta === 0) {
+      return
+    }
+
+    scrollElement.scrollBy({
+      left: leftDelta,
+      top: topDelta,
+    })
+
+    if (windowTopDelta !== 0) {
+      window.scrollBy({
+        top: windowTopDelta,
+      })
+    }
+
+    syncPreviewPlacement(x, y)
+    autoScrollFrameRef.current = window.requestAnimationFrame(continueAutoScroll)
+  })
+
+  const maybeAutoScroll = useEffectEvent((clientX, clientY) => {
+    dragPointerRef.current = {
+      x: clientX,
+      y: clientY,
+    }
+
+    const scrollElement = scrollAreaRef.current
+    if (!scrollElement) {
+      return
+    }
+
+    const { leftDelta, topDelta } = getAutoScrollDelta(scrollElement, clientX, clientY)
+    const windowTopDelta = topDelta === 0 ? getWindowAutoScrollDelta(clientY) : 0
+
+    if (leftDelta === 0 && topDelta === 0 && windowTopDelta === 0) {
+      stopAutoScroll()
+      return
+    }
+
+    if (!autoScrollFrameRef.current) {
+      autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScroll)
+    }
+  })
+
   const handlePointerMove = useEffectEvent((event) => {
     if (!interaction) {
       return
+    }
+
+    dragPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
     }
 
     setPointerPosition((currentPointer) => {
@@ -313,17 +414,14 @@ function PlanningWorkspace({
     }
 
     maybeAutoScroll(event.clientX, event.clientY)
-
-    const nextPreview = getPlacementPreviewFromPointer(event.clientX, event.clientY)
-    setPreviewPlacement((currentPreview) =>
-      isSamePreview(currentPreview, nextPreview) ? currentPreview : nextPreview,
-    )
+    syncPreviewPlacement(event.clientX, event.clientY)
   })
 
   const handlePointerUp = useEffectEvent(() => {
     const activeInteraction = interaction
     const finalPreview = previewPlacement
 
+    stopAutoScroll()
     setInteraction(null)
     setPreviewPlacement(null)
 
@@ -369,6 +467,7 @@ function PlanningWorkspace({
     window.addEventListener('pointerup', handlePointerUp)
 
     return () => {
+      stopAutoScroll()
       document.body.style.userSelect = previousUserSelect
       document.body.style.cursor = previousCursor
       window.removeEventListener('pointermove', handlePointerMove)
@@ -392,6 +491,10 @@ function PlanningWorkspace({
       x: event.clientX,
       y: event.clientY,
     })
+    dragPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    }
     setInteraction({
       mode: 'create',
       customerId: customer.id,
@@ -414,6 +517,10 @@ function PlanningWorkspace({
       x: event.clientX,
       y: event.clientY,
     })
+    dragPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    }
     setInteraction({
       mode: 'move',
       entryId: entry.id,
