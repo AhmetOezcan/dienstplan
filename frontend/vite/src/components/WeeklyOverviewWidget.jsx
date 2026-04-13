@@ -1,4 +1,8 @@
 import { printSection } from '../utils/printSection'
+import {
+  getDurationHoursBetweenTimes,
+  getScheduleTimeRangeLabel,
+} from '../utils/scheduleTime'
 
 function getEmployeeDisplayName(employee) {
   if (!employee) {
@@ -43,38 +47,8 @@ function getScheduleEntryEndTime(entry) {
   return entry.end_time?.slice(0, 5) ?? ''
 }
 
-function getTimeValueInMinutes(timeValue) {
-  if (typeof timeValue !== 'string') {
-    return null
-  }
-
-  const [hoursValue, minutesValue] = timeValue.split(':')
-  const hours = Number.parseInt(hoursValue ?? '', 10)
-  const minutes = Number.parseInt(minutesValue ?? '', 10)
-
-  if (
-    Number.isNaN(hours) ||
-    Number.isNaN(minutes) ||
-    hours < 0 ||
-    hours > 23 ||
-    minutes < 0 ||
-    minutes > 59
-  ) {
-    return null
-  }
-
-  return hours * 60 + minutes
-}
-
 function getScheduleEntryDurationHours(entry) {
-  const startMinutes = getTimeValueInMinutes(getScheduleEntryStartTime(entry))
-  const endMinutes = getTimeValueInMinutes(getScheduleEntryEndTime(entry))
-
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-    return 0
-  }
-
-  return (endMinutes - startMinutes) / 60
+  return getDurationHoursBetweenTimes(getScheduleEntryStartTime(entry), getScheduleEntryEndTime(entry))
 }
 
 function formatHourValue(hours) {
@@ -276,6 +250,7 @@ function WeeklyOverviewWidget({
                                   const customer = customersById[entry.customer_id]
                                   const startTime = getScheduleEntryStartTime(entry)
                                   const endTime = getScheduleEntryEndTime(entry)
+                                  const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
                                   const customerLabel =
                                     customer?.name ?? `Kunde #${entry.customer_id}`
 
@@ -286,12 +261,12 @@ function WeeklyOverviewWidget({
                                       style={{
                                         '--weekly-overview-accent': customer?.color ?? '#334155',
                                       }}
-                                      title={`${employeeLabel} · ${day} · ${startTime} - ${endTime} · ${customerLabel}${
+                                      title={`${employeeLabel} · ${day} · ${timeRangeLabel} · ${customerLabel}${
                                         customer?.address ? ` · ${customer.address}` : ''
                                       }`}
                                     >
                                       <span className="weekly-overview-assignment-time">
-                                        {startTime} - {endTime}
+                                        {timeRangeLabel}
                                       </span>
                                       <strong className="weekly-overview-assignment-name">
                                         {customerLabel}
@@ -386,6 +361,7 @@ function WeeklyOverviewWidget({
                                   const customer = customersById[entry.customer_id]
                                   const startTime = getScheduleEntryStartTime(entry)
                                   const endTime = getScheduleEntryEndTime(entry)
+                                  const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
                                   const customerLabel =
                                     customer?.name ?? `Kunde #${entry.customer_id}`
 
@@ -399,7 +375,7 @@ function WeeklyOverviewWidget({
                                       }}
                                     >
                                       <span className="weekly-overview-print-assignment-time">
-                                        {startTime} - {endTime}
+                                        {timeRangeLabel}
                                       </span>
                                       <strong>{customerLabel}</strong>
                                     </article>

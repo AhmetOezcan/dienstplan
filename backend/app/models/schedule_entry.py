@@ -7,7 +7,7 @@ from app.database import Base
 class ScheduleEntry(Base):
     __tablename__ = "schedule_entries"
     __table_args__ = (
-        CheckConstraint("start_time < end_time", name="ck_schedule_entries_time_order"),
+        CheckConstraint("start_time <> end_time", name="ck_schedule_entries_times_distinct"),
         Index(
             "ix_schedule_entries_account_id_date_start_time_id",
             "account_id",

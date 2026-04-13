@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import PlanningWorkspace from './components/PlanningWorkspace'
 import WeeklyOverviewWidget from './components/WeeklyOverviewWidget'
+import {
+  getDurationHoursBetweenTimes,
+  getNormalizedTimeRange,
+  getScheduleIntervalBounds,
+} from './utils/scheduleTime'
 
 const weekdays = [
   'Montag',
@@ -12,18 +17,7 @@ const weekdays = [
   'Samstag',
   'Sonntag',
 ]
-
-function createHourlyTimeLabels(startHour, endHour) {
-  return Array.from({ length: endHour - startHour + 1 }, (_, index) => {
-    const hour = startHour + index
-    return `${String(hour).padStart(2, '0')}:00`
-  })
-}
-
-const timeSlots = createHourlyTimeLabels(6, 22)
-const timeOptions = createHourlyTimeLabels(6, 23)
 const weekdayNumberByName = Object.fromEntries(weekdays.map((day, index) => [day, index + 1]))
-const timeIndexByValue = Object.fromEntries(timeOptions.map((time, index) => [time, index]))
 const CUSTOMER_COLOR_OPTIONS = [
   '#ef4444',
   '#f97316',
@@ -76,8 +70,27 @@ const CUSTOMER_COLOR_OPTIONS = [
   '#334155',
   '#64748b',
 ]
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const LOCAL_API_HOSTNAMES = new Set(['localhost', '127.0.0.1'])
+
+function normalizeApiBaseUrl(value) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value.trim().replace(/\/+$/, '')
+}
+
+function getDefaultApiBaseUrl() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  return LOCAL_API_HOSTNAMES.has(window.location.hostname) ? 'http://localhost:8000' : ''
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL) || getDefaultApiBaseUrl()
 const AUTH_STORAGE_KEY = 'dienstplan_auth_session'
+const CUSTOMER_WIDGET_STORAGE_KEY_PREFIX = 'dienstplan_customer_widget_ids'
 
 function createEmptyAuthSession() {
   return {
@@ -136,6 +149,58 @@ function clearStoredAuthSession() {
   }
 
   window.localStorage.removeItem(AUTH_STORAGE_KEY)
+}
+
+function getCustomerWidgetStorageKey(accountId, userId) {
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return null
+  }
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null
+  }
+
+  return `${CUSTOMER_WIDGET_STORAGE_KEY_PREFIX}_${accountId}_${userId}`
+}
+
+function normalizeCustomerWidgetCustomerIds(customerIds) {
+  if (!Array.isArray(customerIds)) {
+    return []
+  }
+
+  return [...new Set(customerIds.filter((customerId) => Number.isInteger(customerId) && customerId > 0))]
+}
+
+function getStoredCustomerWidgetCustomerIdsByKey(storageKey) {
+  if (typeof window === 'undefined' || !storageKey) {
+    return []
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(storageKey)
+    if (!storedValue) {
+      return []
+    }
+
+    return normalizeCustomerWidgetCustomerIds(JSON.parse(storedValue))
+  } catch {
+    return []
+  }
+}
+
+function persistCustomerWidgetCustomerIdsByKey(storageKey, customerIds) {
+  if (typeof window === 'undefined' || !storageKey) {
+    return
+  }
+
+  const normalizedCustomerIds = normalizeCustomerWidgetCustomerIds(customerIds)
+
+  if (normalizedCustomerIds.length === 0) {
+    window.localStorage.removeItem(storageKey)
+    return
+  }
+
+  window.localStorage.setItem(storageKey, JSON.stringify(normalizedCustomerIds))
 }
 
 function createInitialLoginForm() {
@@ -414,42 +479,8 @@ function sortScheduleEntries(items) {
   })
 }
 
-function getTimeIndex(time) {
-  return timeIndexByValue[time] ?? -1
-}
-
-function getTimeValueInMinutes(timeValue) {
-  if (typeof timeValue !== 'string') {
-    return null
-  }
-
-  const [hoursValue, minutesValue] = timeValue.split(':')
-  const hours = Number.parseInt(hoursValue ?? '', 10)
-  const minutes = Number.parseInt(minutesValue ?? '', 10)
-
-  if (
-    Number.isNaN(hours) ||
-    Number.isNaN(minutes) ||
-    hours < 0 ||
-    hours > 23 ||
-    minutes < 0 ||
-    minutes > 59
-  ) {
-    return null
-  }
-
-  return hours * 60 + minutes
-}
-
 function getScheduleEntryDurationHours(entry) {
-  const startMinutes = getTimeValueInMinutes(getScheduleEntryStartTime(entry))
-  const endMinutes = getTimeValueInMinutes(getScheduleEntryEndTime(entry))
-
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-    return 0
-  }
-
-  return (endMinutes - startMinutes) / 60
+  return getDurationHoursBetweenTimes(getScheduleEntryStartTime(entry), getScheduleEntryEndTime(entry))
 }
 
 const HOURS_CHART_BAR_COLORS = [
@@ -1071,6 +1102,10 @@ function LegalSection({ activeSection, accountName, onBackToSchedule }) {
 
 function App() {
   const initialAuthSession = getStoredAuthSession()
+  const initialCustomerWidgetStorageKey = getCustomerWidgetStorageKey(
+    initialAuthSession.account?.id ?? null,
+    initialAuthSession.user?.id ?? null,
+  )
   const [authSession, setAuthSession] = useState(initialAuthSession)
   const [loginForm, setLoginForm] = useState(createInitialLoginForm)
   const [setupForm, setSetupForm] = useState(() =>
@@ -1082,7 +1117,10 @@ function App() {
   const [activeDashboardSection, setActiveDashboardSection] = useState('schedule')
   const [isLegalMenuOpen, setIsLegalMenuOpen] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
-  const [customerWidgetCustomerIds, setCustomerWidgetCustomerIds] = useState([])
+  const [customerWidgetState, setCustomerWidgetState] = useState(() => ({
+    storageKey: initialCustomerWidgetStorageKey,
+    customerIds: getStoredCustomerWidgetCustomerIdsByKey(initialCustomerWidgetStorageKey),
+  }))
   const [employeeForm, setEmployeeForm] = useState(createInitialEmployeeForm)
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
   const [year, setYear] = useState(INITIAL_CALENDAR_STATE.year)
@@ -1111,6 +1149,21 @@ function App() {
       : currentUser?.email ?? ''
   const greetingName = getGreetingName(currentUserDisplayName) || 'zurück'
   const currentDateLabel = formatCurrentDateLabel(new Date())
+  const customerWidgetCustomerIds = customerWidgetState.customerIds
+
+  const setCustomerWidgetCustomerIds = (valueOrUpdater) => {
+    setCustomerWidgetState((currentWidgetState) => {
+      const nextCustomerIds =
+        typeof valueOrUpdater === 'function'
+          ? valueOrUpdater(currentWidgetState.customerIds)
+          : valueOrUpdater
+
+      return {
+        ...currentWidgetState,
+        customerIds: normalizeCustomerWidgetCustomerIds(nextCustomerIds),
+      }
+    })
+  }
 
   useEffect(() => {
     if (!isAuthenticated || requiresInitialSetup) {
@@ -1224,12 +1277,41 @@ function App() {
   }, [isLegalMenuOpen])
 
   useEffect(() => {
+    const nextStorageKey =
+      isAuthenticated && !requiresInitialSetup
+        ? getCustomerWidgetStorageKey(currentAccount?.id ?? null, currentUser?.id ?? null)
+        : null
+
+    setCustomerWidgetState((currentWidgetState) => {
+      if (currentWidgetState.storageKey === nextStorageKey) {
+        return currentWidgetState
+      }
+
+      return {
+        storageKey: nextStorageKey,
+        customerIds: getStoredCustomerWidgetCustomerIdsByKey(nextStorageKey),
+      }
+    })
+  }, [currentAccount?.id, currentUser?.id, isAuthenticated, requiresInitialSetup])
+
+  useEffect(() => {
+    persistCustomerWidgetCustomerIdsByKey(
+      customerWidgetState.storageKey,
+      customerWidgetState.customerIds,
+    )
+  }, [customerWidgetState])
+
+  useEffect(() => {
+    if (isLoading) {
+      return
+    }
+
     const validCustomerIds = new Set(customers.map((customer) => customer.id))
 
     setCustomerWidgetCustomerIds((currentCustomerIds) =>
       currentCustomerIds.filter((customerId) => validCustomerIds.has(customerId)),
     )
-  }, [customers])
+  }, [customers, isLoading])
 
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) ?? null
@@ -1600,43 +1682,62 @@ function App() {
   }
 
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
-    const startIndex = getTimeIndex(startTime)
-    const endIndex = getTimeIndex(endTime)
+    const candidateInterval = getScheduleIntervalBounds(
+      dayOfWeek,
+      startTime,
+      endTime,
+      weekdayNumberByName,
+    )
 
-    if (startIndex < 0 || endIndex <= startIndex) {
+    if (!candidateInterval) {
       return true
     }
 
     return scheduleEntriesForCurrentView.some((entry) => {
-      if (entry.id === ignoreEntryId || getScheduleEntryDay(entry) !== dayOfWeek) {
+      if (entry.id === ignoreEntryId) {
         return false
       }
 
-      const entryStartIndex = getTimeIndex(getScheduleEntryStartTime(entry))
-      const entryEndIndex = getTimeIndex(getScheduleEntryEndTime(entry))
+      const entryInterval = getScheduleIntervalBounds(
+        getScheduleEntryDay(entry),
+        getScheduleEntryStartTime(entry),
+        getScheduleEntryEndTime(entry),
+        weekdayNumberByName,
+      )
 
-      return startIndex < entryEndIndex && entryStartIndex < endIndex
+      if (!entryInterval) {
+        return false
+      }
+
+      return candidateInterval.start < entryInterval.end && entryInterval.start < candidateInterval.end
     })
   }
 
   const createScheduleEntry = async ({ customerId, dayOfWeek, startTime, endTime }) => {
     if (isSavingSchedule) {
-      return
+      return false
     }
 
     if (selectedEmployeeId === null) {
       setLoadError('Bitte zuerst einen Mitarbeiter auswählen.')
-      return
+      return false
     }
 
     if (!Number.isInteger(customerId) || customerId <= 0 || !endTime) {
       setLoadError('Dieser Kunde konnte nicht eingeplant werden.')
-      return
+      return false
+    }
+
+    if (!getNormalizedTimeRange(startTime, endTime)) {
+      setLoadError(
+        'Bitte gültige Uhrzeiten eingeben. Für Einsätze über Mitternacht darf die Bis-Uhrzeit früher sein.',
+      )
+      return false
     }
 
     if (hasScheduleConflict({ dayOfWeek, startTime, endTime })) {
       setLoadError('Dieses Zeitfenster ist bereits belegt.')
-      return
+      return false
     }
 
     setIsSavingSchedule(true)
@@ -1664,13 +1765,15 @@ function App() {
         sortScheduleEntries([...currentEntries, createdScheduleEntry]),
       )
       setLoadError('')
+      return true
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
         resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
-        return
+        return false
       }
 
       setLoadError(error.message || 'Einsatz konnte nicht gespeichert werden.')
+      return false
     } finally {
       setIsSavingSchedule(false)
     }
@@ -1678,7 +1781,7 @@ function App() {
 
   const updateScheduleEntry = async (entryId, updates, fallbackMessage) => {
     if (isSavingSchedule) {
-      return
+      return false
     }
 
     setIsSavingSchedule(true)
@@ -1696,13 +1799,15 @@ function App() {
         ),
       )
       setLoadError('')
+      return true
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
         resetAuthenticatedApp('Sitzung abgelaufen. Bitte erneut anmelden.')
-        return
+        return false
       }
 
       setLoadError(error.message || fallbackMessage)
+      return false
     } finally {
       setIsSavingSchedule(false)
     }
@@ -1713,21 +1818,28 @@ function App() {
 
     if (!entry) {
       setLoadError('Dieser Einsatz konnte nicht gefunden werden.')
-      return
+      return false
+    }
+
+    if (!getNormalizedTimeRange(startTime, endTime)) {
+      setLoadError(
+        'Bitte gültige Uhrzeiten eingeben. Für Einsätze über Mitternacht darf die Bis-Uhrzeit früher sein.',
+      )
+      return false
     }
 
     if (hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId: entryId })) {
       setLoadError('Dieses Zeitfenster ist bereits belegt.')
-      return
+      return false
     }
 
     const scheduleDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
     if (!scheduleDate) {
       setLoadError('Für die ausgewählte Kalenderwoche konnte kein gültiges Datum ermittelt werden.')
-      return
+      return false
     }
 
-    await updateScheduleEntry(
+    return await updateScheduleEntry(
       entryId,
       {
         date: scheduleDate,
@@ -1735,31 +1847,6 @@ function App() {
         end_time: endTime,
       },
       'Einsatz konnte nicht verschoben werden.',
-    )
-  }
-
-  const resizeScheduleEntry = async ({ entryId, endTime }) => {
-    const entry = scheduleEntriesForCurrentView.find((currentEntry) => currentEntry.id === entryId)
-
-    if (!entry) {
-      setLoadError('Dieser Einsatz konnte nicht gefunden werden.')
-      return
-    }
-
-    const startTime = getScheduleEntryStartTime(entry)
-    const dayOfWeek = getScheduleEntryDay(entry)
-
-    if (hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId: entryId })) {
-      setLoadError('Dieses Zeitfenster ist bereits belegt.')
-      return
-    }
-
-    await updateScheduleEntry(
-      entryId,
-      {
-        end_time: endTime,
-      },
-      'Dauer konnte nicht aktualisiert werden.',
     )
   }
 
@@ -2206,7 +2293,6 @@ function App() {
               customers={customers}
               customersById={customersById}
               dashboardWeekLabel={dashboardWeekLabel}
-              getTimeIndex={getTimeIndex}
               isSavingSchedule={isSavingSchedule}
               onAddCustomerToWidget={addCustomerToWidget}
               onCalendarWeekChange={setCalendarWeek}
@@ -2215,15 +2301,12 @@ function App() {
               onDeleteScheduleEntry={deleteScheduleEntry}
               onMoveScheduleEntry={moveScheduleEntry}
               onRemoveCustomerFromWidget={removeCustomerFromWidget}
-              onResizeScheduleEntry={resizeScheduleEntry}
               onYearChange={setYear}
               scheduleDateRangeLabel={scheduleDateRangeLabel}
               scheduleEntries={scheduleEntriesForCurrentView}
               selectedEmployeeId={selectedEmployeeId}
               selectedEmployeeLabel={selectedEmployeeLabel}
               sidebarContent={employeeSelectionWidget}
-              timeOptions={timeOptions}
-              timeSlots={timeSlots}
               widgetCustomers={widgetCustomers}
               weekdays={weekdays}
               year={year}

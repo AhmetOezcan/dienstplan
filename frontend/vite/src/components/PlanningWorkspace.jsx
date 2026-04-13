@@ -1,10 +1,15 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { printSection } from '../utils/printSection'
+import {
+  getDurationHoursBetweenTimes,
+  getNormalizedTimeRange,
+  getScheduleIntervalBounds,
+  getScheduleTimeRangeLabel,
+} from '../utils/scheduleTime'
 
-const DEFAULT_PLANNER_ROW_HEIGHT = 48
-const PLANNER_HEADER_HEIGHT = 58
 const AUTO_SCROLL_EDGE = 72
 const AUTO_SCROLL_STEP = 22
+const DRAG_ACTIVATION_DISTANCE = 6
 
 function getScheduleEntryDay(entry) {
   return entry.day_of_week ?? entry.day ?? ''
@@ -65,27 +70,25 @@ function isSamePreview(left, right) {
     return false
   }
 
-  return (
-    left.kind === right.kind &&
-    left.dayOfWeek === right.dayOfWeek &&
-    left.startTime === right.startTime &&
-    left.endTime === right.endTime &&
-    left.valid === right.valid
-  )
+  return left.dayOfWeek === right.dayOfWeek
 }
 
-function formatDurationLabel(startTime, endTime, getTimeIndex) {
-  const duration = getTimeIndex(endTime) - getTimeIndex(startTime)
+function formatDurationLabel(startTime, endTime) {
+  const durationHours = getDurationHoursBetweenTimes(startTime, endTime)
 
-  if (duration <= 0) {
+  if (durationHours <= 0) {
     return ''
   }
 
-  if (duration === 1) {
-    return '1 Std.'
+  const durationMinutes = durationHours * 60
+  if (durationMinutes < 60) {
+    return `${durationMinutes} Min.`
   }
 
-  return `${duration} Std.`
+  return `${new Intl.NumberFormat('de-AT', {
+    minimumFractionDigits: Number.isInteger(durationHours) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(durationHours)} Std.`
 }
 
 function PlanningWorkspace({
@@ -94,7 +97,6 @@ function PlanningWorkspace({
   customers,
   customersById,
   dashboardWeekLabel,
-  getTimeIndex,
   isSavingSchedule,
   onAddCustomerToWidget,
   onCalendarWeekChange,
@@ -103,15 +105,12 @@ function PlanningWorkspace({
   onDeleteScheduleEntry,
   onMoveScheduleEntry,
   onRemoveCustomerFromWidget,
-  onResizeScheduleEntry,
   onYearChange,
   scheduleDateRangeLabel,
   scheduleEntries,
   selectedEmployeeId,
   selectedEmployeeLabel,
   sidebarContent,
-  timeOptions,
-  timeSlots,
   widgetCustomers,
   weekdays,
   year,
@@ -120,6 +119,7 @@ function PlanningWorkspace({
   const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false)
   const [pointerPosition, setPointerPosition] = useState({ x: 0, y: 0 })
   const [previewPlacement, setPreviewPlacement] = useState(null)
+  const [editorDraft, setEditorDraft] = useState(null)
   const scrollAreaRef = useRef(null)
   const boardRef = useRef(null)
 
@@ -127,40 +127,92 @@ function PlanningWorkspace({
   const isPlannerInteractive = selectedEmployeeId !== null && !isSavingSchedule
   const activePreviewCustomer =
     interaction?.customerId !== undefined ? customersById[interaction.customerId] ?? null : null
-  const plannerRowHeight = DEFAULT_PLANNER_ROW_HEIGHT
-  const plannerVisibleHeight = PLANNER_HEADER_HEIGHT + plannerRowHeight * timeSlots.length
+  const activeEditorCustomer =
+    editorDraft?.customerId !== undefined ? customersById[editorDraft.customerId] ?? null : null
   const canAddCustomersToWidget = customersAvailableForWidget.length > 0
   const isCustomerPickerVisible = isCustomerPickerOpen && canAddCustomersToWidget
+  const weekdayNumberByName = Object.fromEntries(
+    weekdays.map((day, index) => [day, index + 1]),
+  )
+  const entriesByDay = Object.fromEntries(
+    weekdays.map((day) => [day, scheduleEntries.filter((entry) => getScheduleEntryDay(entry) === day)]),
+  )
 
   const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
-    const startIndex = getTimeIndex(startTime)
-    const endIndex = getTimeIndex(endTime)
+    const candidateInterval = getScheduleIntervalBounds(
+      dayOfWeek,
+      startTime,
+      endTime,
+      weekdayNumberByName,
+    )
 
-    if (startIndex < 0 || endIndex <= startIndex) {
+    if (!candidateInterval) {
       return true
     }
 
     return scheduleEntries.some((entry) => {
-      if (entry.id === ignoreEntryId || getScheduleEntryDay(entry) !== dayOfWeek) {
+      if (entry.id === ignoreEntryId) {
         return false
       }
 
-      const entryStartIndex = getTimeIndex(getScheduleEntryStartTime(entry))
-      const entryEndIndex = getTimeIndex(getScheduleEntryEndTime(entry))
+      const entryInterval = getScheduleIntervalBounds(
+        getScheduleEntryDay(entry),
+        getScheduleEntryStartTime(entry),
+        getScheduleEntryEndTime(entry),
+        weekdayNumberByName,
+      )
 
-      return startIndex < entryEndIndex && entryStartIndex < endIndex
+      if (!entryInterval) {
+        return false
+      }
+
+      return candidateInterval.start < entryInterval.end && entryInterval.start < candidateInterval.end
     })
   }
 
-  const getMaximumResizeEndIndex = (entryId, dayOfWeek, startIndex) => {
-    const nextStartIndex = scheduleEntries
-      .filter((entry) => entry.id !== entryId && getScheduleEntryDay(entry) === dayOfWeek)
-      .map((entry) => getTimeIndex(getScheduleEntryStartTime(entry)))
-      .filter((timeIndex) => timeIndex > startIndex)
-      .sort((left, right) => left - right)[0]
+  const getEditorValidation = (draft) => {
+    if (!draft?.startTime || !draft?.endTime) {
+      return {
+        isValid: false,
+        tone: 'info',
+        message: 'Zeit von und bis manuell eintragen.',
+      }
+    }
 
-    return nextStartIndex ?? timeOptions.length - 1
+    const normalizedTimeRange = getNormalizedTimeRange(draft.startTime, draft.endTime)
+
+    if (!normalizedTimeRange) {
+      return {
+        isValid: false,
+        tone: 'invalid',
+        message:
+          'Bitte gültige Uhrzeiten eintragen. Für Einsätze über Mitternacht darf die Bis-Uhrzeit früher sein.',
+      }
+    }
+
+    if (
+      hasScheduleConflict({
+        dayOfWeek: draft.dayOfWeek,
+        startTime: draft.startTime,
+        endTime: draft.endTime,
+        ignoreEntryId: draft.entryId ?? null,
+      })
+    ) {
+      return {
+        isValid: false,
+        tone: 'invalid',
+        message: 'Dieses Zeitfenster ist bereits belegt.',
+      }
+    }
+
+    return {
+      isValid: true,
+      tone: 'valid',
+      message: 'Zeitfenster frei. Auftrag kann gespeichert werden.',
+    }
   }
+
+  const editorValidation = editorDraft ? getEditorValidation(editorDraft) : null
 
   const maybeAutoScroll = (clientX, clientY) => {
     const scrollElement = scrollAreaRef.current
@@ -192,11 +244,11 @@ function PlanningWorkspace({
     }
   }
 
-  const getPlacementPreviewFromPointer = (clientX, clientY, activeInteraction) => {
+  const getPlacementPreviewFromPointer = (clientX, clientY) => {
     const boardElement = boardRef.current
     const scrollElement = scrollAreaRef.current
 
-    if (!boardElement || !scrollElement || !activeInteraction) {
+    if (!boardElement || !scrollElement) {
       return null
     }
 
@@ -211,63 +263,11 @@ function PlanningWorkspace({
     }
 
     const contentX = clientX - boardRect.left + scrollElement.scrollLeft
-    const contentY = clientY - boardRect.top + scrollElement.scrollTop
     const dayWidth = boardElement.scrollWidth / weekdays.length
     const dayIndex = clamp(Math.floor(contentX / dayWidth), 0, weekdays.length - 1)
-    const slotIndex = clamp(Math.floor(contentY / plannerRowHeight), 0, timeSlots.length - 1)
-    const dayOfWeek = weekdays[dayIndex]
-    const startTime = timeSlots[slotIndex]
-    const endTime = timeOptions[slotIndex + activeInteraction.span]
-
-    if (!endTime) {
-      return {
-        kind: 'placement',
-        dayOfWeek,
-        startTime,
-        endTime: '',
-        valid: false,
-      }
-    }
-
-    const ignoreEntryId = activeInteraction.mode === 'move' ? activeInteraction.entryId : null
 
     return {
-      kind: 'placement',
-      dayOfWeek,
-      startTime,
-      endTime,
-      valid: !hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId }),
-    }
-  }
-
-  const getResizePreviewFromPointer = (clientY, activeInteraction) => {
-    const boardElement = boardRef.current
-    const scrollElement = scrollAreaRef.current
-
-    if (!boardElement || !scrollElement || !activeInteraction) {
-      return null
-    }
-
-    const boardRect = boardElement.getBoundingClientRect()
-    const contentY = clientY - boardRect.top + scrollElement.scrollTop
-    const startIndex = getTimeIndex(activeInteraction.startTime)
-    const maximumEndIndex = getMaximumResizeEndIndex(
-      activeInteraction.entryId,
-      activeInteraction.dayOfWeek,
-      startIndex,
-    )
-    const endIndex = clamp(
-      Math.floor(contentY / plannerRowHeight) + 1,
-      startIndex + 1,
-      maximumEndIndex,
-    )
-
-    return {
-      kind: 'resize',
-      dayOfWeek: activeInteraction.dayOfWeek,
-      startTime: activeInteraction.startTime,
-      endTime: timeOptions[endIndex] ?? activeInteraction.originalEndTime,
-      valid: true,
+      dayOfWeek: weekdays[dayIndex],
     }
   }
 
@@ -287,13 +287,30 @@ function PlanningWorkspace({
       }
     })
 
+    const deltaX = event.clientX - interaction.originX
+    const deltaY = event.clientY - interaction.originY
+    const dragActivated =
+      interaction.dragActivated ||
+      Math.hypot(deltaX, deltaY) >= DRAG_ACTIVATION_DISTANCE
+
+    if (!dragActivated) {
+      return
+    }
+
+    if (!interaction.dragActivated) {
+      setInteraction((currentInteraction) =>
+        currentInteraction
+          ? {
+              ...currentInteraction,
+              dragActivated: true,
+            }
+          : currentInteraction,
+      )
+    }
+
     maybeAutoScroll(event.clientX, event.clientY)
 
-    const nextPreview =
-      interaction.mode === 'resize'
-        ? getResizePreviewFromPointer(event.clientY, interaction)
-        : getPlacementPreviewFromPointer(event.clientX, event.clientY, interaction)
-
+    const nextPreview = getPlacementPreviewFromPointer(event.clientX, event.clientY)
     setPreviewPlacement((currentPreview) =>
       isSamePreview(currentPreview, nextPreview) ? currentPreview : nextPreview,
     )
@@ -306,43 +323,32 @@ function PlanningWorkspace({
     setInteraction(null)
     setPreviewPlacement(null)
 
-    if (!activeInteraction || !finalPreview?.valid || isSavingSchedule) {
+    if (!activeInteraction?.dragActivated || !finalPreview || isSavingSchedule) {
       return
     }
 
     if (activeInteraction.mode === 'create') {
-      void onCreateScheduleEntry({
+      setEditorDraft({
+        mode: 'create',
         customerId: activeInteraction.customerId,
         dayOfWeek: finalPreview.dayOfWeek,
-        startTime: finalPreview.startTime,
-        endTime: finalPreview.endTime,
+        startTime: '',
+        endTime: '',
       })
       return
     }
 
-    if (activeInteraction.mode === 'move') {
-      if (
-        activeInteraction.originalDayOfWeek === finalPreview.dayOfWeek &&
-        activeInteraction.originalStartTime === finalPreview.startTime
-      ) {
-        return
-      }
-
-      void onMoveScheduleEntry({
-        entryId: activeInteraction.entryId,
-        dayOfWeek: finalPreview.dayOfWeek,
-        startTime: finalPreview.startTime,
-        endTime: finalPreview.endTime,
-      })
-      return
-    }
-
-    if (finalPreview.endTime !== activeInteraction.originalEndTime) {
-      void onResizeScheduleEntry({
-        entryId: activeInteraction.entryId,
-        endTime: finalPreview.endTime,
-      })
-    }
+    setEditorDraft({
+      mode: 'move',
+      entryId: activeInteraction.entryId,
+      customerId: activeInteraction.customerId,
+      dayOfWeek: finalPreview.dayOfWeek,
+      startTime: activeInteraction.originalStartTime,
+      endTime: activeInteraction.originalEndTime,
+      originalDayOfWeek: activeInteraction.originalDayOfWeek,
+      originalStartTime: activeInteraction.originalStartTime,
+      originalEndTime: activeInteraction.originalEndTime,
+    })
   })
 
   useEffect(() => {
@@ -353,7 +359,7 @@ function PlanningWorkspace({
     const previousUserSelect = document.body.style.userSelect
     const previousCursor = document.body.style.cursor
     document.body.style.userSelect = 'none'
-    document.body.style.cursor = interaction.mode === 'resize' ? 'ns-resize' : 'grabbing'
+    document.body.style.cursor = interaction.dragActivated ? 'grabbing' : 'default'
 
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp)
@@ -377,6 +383,7 @@ function PlanningWorkspace({
       return
     }
 
+    setEditorDraft(null)
     setPointerPosition({
       x: event.clientX,
       y: event.clientY,
@@ -384,7 +391,9 @@ function PlanningWorkspace({
     setInteraction({
       mode: 'create',
       customerId: customer.id,
-      span: 1,
+      originX: event.clientX,
+      originY: event.clientY,
+      dragActivated: false,
     })
     setPreviewPlacement(null)
   }
@@ -394,16 +403,9 @@ function PlanningWorkspace({
       return
     }
 
-    const startTime = getScheduleEntryStartTime(entry)
-    const endTime = getScheduleEntryEndTime(entry)
-    const span = Math.max(getTimeIndex(endTime) - getTimeIndex(startTime), 1)
-
-    if (span < 1) {
-      return
-    }
-
     event.preventDefault()
 
+    setEditorDraft(null)
     setPointerPosition({
       x: event.clientX,
       y: event.clientY,
@@ -412,49 +414,98 @@ function PlanningWorkspace({
       mode: 'move',
       entryId: entry.id,
       customerId: entry.customer_id,
-      span,
       originalDayOfWeek: getScheduleEntryDay(entry),
-      originalStartTime: startTime,
+      originalStartTime: getScheduleEntryStartTime(entry),
+      originalEndTime: getScheduleEntryEndTime(entry),
+      originX: event.clientX,
+      originY: event.clientY,
+      dragActivated: false,
     })
-    setPreviewPlacement({
-      kind: 'placement',
-      dayOfWeek: getScheduleEntryDay(entry),
-      startTime,
-      endTime,
-      valid: true,
-    })
+    setPreviewPlacement(null)
   }
 
-  const handleResizePointerDown = (entry, event) => {
-    if (event.button !== 0 || isSavingSchedule) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-
-    const startTime = getScheduleEntryStartTime(entry)
-    const endTime = getScheduleEntryEndTime(entry)
-
-    setPointerPosition({
-      x: event.clientX,
-      y: event.clientY,
-    })
-    setInteraction({
-      mode: 'resize',
+  const openEditorForEntry = (entry) => {
+    setInteraction(null)
+    setPreviewPlacement(null)
+    setEditorDraft({
+      mode: 'edit',
       entryId: entry.id,
       customerId: entry.customer_id,
       dayOfWeek: getScheduleEntryDay(entry),
-      startTime,
-      originalEndTime: endTime,
+      startTime: getScheduleEntryStartTime(entry),
+      endTime: getScheduleEntryEndTime(entry),
+      originalDayOfWeek: getScheduleEntryDay(entry),
+      originalStartTime: getScheduleEntryStartTime(entry),
+      originalEndTime: getScheduleEntryEndTime(entry),
     })
-    setPreviewPlacement({
-      kind: 'resize',
-      dayOfWeek: getScheduleEntryDay(entry),
-      startTime,
-      endTime,
-      valid: true,
-    })
+  }
+
+  const handleEditorFieldChange = (field, value) => {
+    setEditorDraft((currentDraft) =>
+      currentDraft
+        ? {
+            ...currentDraft,
+            [field]: value,
+          }
+        : currentDraft,
+    )
+  }
+
+  const handleEditorCancel = () => {
+    setEditorDraft(null)
+  }
+
+  const handleEditorSubmit = async (event) => {
+    event.preventDefault()
+
+    if (!editorDraft) {
+      return
+    }
+
+    const validation = getEditorValidation(editorDraft)
+    if (!validation.isValid) {
+      return
+    }
+
+    if (
+      editorDraft.mode !== 'create' &&
+      editorDraft.originalDayOfWeek === editorDraft.dayOfWeek &&
+      editorDraft.originalStartTime === editorDraft.startTime &&
+      editorDraft.originalEndTime === editorDraft.endTime
+    ) {
+      setEditorDraft(null)
+      return
+    }
+
+    let wasSaved = false
+
+    if (editorDraft.mode === 'create') {
+      wasSaved = await onCreateScheduleEntry({
+        customerId: editorDraft.customerId,
+        dayOfWeek: editorDraft.dayOfWeek,
+        startTime: editorDraft.startTime,
+        endTime: editorDraft.endTime,
+      })
+    } else {
+      wasSaved = await onMoveScheduleEntry({
+        entryId: editorDraft.entryId,
+        dayOfWeek: editorDraft.dayOfWeek,
+        startTime: editorDraft.startTime,
+        endTime: editorDraft.endTime,
+      })
+    }
+
+    if (wasSaved) {
+      setEditorDraft(null)
+    }
+  }
+
+  const handleDeleteScheduleEntry = (entryId) => {
+    if (editorDraft?.entryId === entryId) {
+      setEditorDraft(null)
+    }
+
+    void onDeleteScheduleEntry(entryId)
   }
 
   return (
@@ -529,173 +580,211 @@ function PlanningWorkspace({
           </div>
         </div>
 
-        <div
-          className={`planner-board${interaction ? ' planner-board-interacting' : ''}`}
-          style={{
-            '--planner-row-height': `${plannerRowHeight}px`,
-            '--planner-row-count': String(timeSlots.length),
-            '--planner-visible-height': `${plannerVisibleHeight}px`,
-          }}
-        >
+        <div className={`planner-board${interaction?.dragActivated ? ' planner-board-interacting' : ''}`}>
           <div className="planner-scroll-area" ref={scrollAreaRef}>
-            <div className="planner-grid-layout">
-              <div className="planner-time-header">Zeit</div>
-              <div className="planner-day-header-grid">
-                {weekdays.map((day) => (
-                  <div key={day} className="planner-day-header-cell">
+            <div className="planner-grid-layout" ref={boardRef}>
+              {weekdays.map((day) => {
+                const dayEntries = entriesByDay[day] ?? []
+
+                return (
+                  <div
+                    key={`${day}-header`}
+                    className={`planner-day-header-cell${
+                      previewPlacement?.dayOfWeek === day ? ' planner-day-header-cell-preview' : ''
+                    }`}
+                  >
                     <span>{day}</span>
+                    <strong>{String(dayEntries.length).padStart(2, '0')}</strong>
                   </div>
-                ))}
-              </div>
+                )
+              })}
 
-              <div className="planner-time-rail">
-                {timeSlots.map((time) => (
-                  <div key={time} className="planner-time-cell">
-                    <span>{time}</span>
-                  </div>
-                ))}
-              </div>
+              {weekdays.map((day) => {
+                const dayEntries = entriesByDay[day] ?? []
+                const dayEditor = editorDraft?.dayOfWeek === day ? editorDraft : null
+                const isPreviewDay = previewPlacement?.dayOfWeek === day
 
-              <div className="planner-day-grid" ref={boardRef}>
-                {weekdays.map((day) => {
-                  const previewBelongsToDay = previewPlacement?.dayOfWeek === day
-                  const previewStartIndex =
-                    previewBelongsToDay && previewPlacement
-                      ? getTimeIndex(previewPlacement.startTime)
-                      : -1
-                  const previewEndIndex =
-                    previewBelongsToDay && previewPlacement
-                      ? getTimeIndex(previewPlacement.endTime)
-                      : -1
-                  const previewSpan =
-                    previewStartIndex >= 0 && previewEndIndex > previewStartIndex
-                      ? previewEndIndex - previewStartIndex
-                      : 1
-
-                  return (
-                    <section key={day} className="planner-day-column" aria-label={day}>
-                      <div className="planner-day-slots" aria-hidden="true">
-                        {timeSlots.map((time) => (
-                          <div key={`${day}-${time}`} className="planner-slot" />
-                        ))}
+                return (
+                  <section
+                    key={day}
+                    className={`planner-day-column${isPreviewDay ? ' planner-day-column-preview' : ''}`}
+                    aria-label={day}
+                  >
+                    {isPreviewDay ? (
+                      <div
+                        className="planner-day-drop-hint"
+                        style={{
+                          backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
+                          color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
+                        }}
+                      >
+                        <strong>{activePreviewCustomer?.name ?? 'Auftrag'}</strong>
+                        <span>Hier ablegen und Zeit von/bis eintragen.</span>
                       </div>
+                    ) : null}
 
-                      {previewBelongsToDay ? (
-                        <article
-                          className={`planner-preview-card${
-                            previewPlacement?.valid === false ? ' planner-preview-card-invalid' : ''
-                          }`}
-                          style={{
-                            '--entry-start': String(previewStartIndex),
-                            '--entry-span': String(previewSpan),
-                            backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
-                            color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
-                          }}
-                        >
-                          {previewSpan !== 2 ? (
-                            <span className="planner-entry-chip">
-                              {interaction?.mode === 'resize' ? 'Resize' : 'Vorschau'}
-                            </span>
-                          ) : null}
-                          <strong className="planner-entry-name">
-                            {activePreviewCustomer?.name ?? 'Einsatz'}
-                          </strong>
-                          <span className="planner-entry-time">
-                            {previewPlacement.startTime} - {previewPlacement.endTime}
+                    {dayEditor ? (
+                      <form className="planner-time-editor" onSubmit={handleEditorSubmit}>
+                        <div className="planner-time-editor-topline">
+                          <div>
+                            <span className="planner-time-editor-kicker">{dayEditor.dayOfWeek}</span>
+                            <strong className="planner-time-editor-title">
+                              {activeEditorCustomer?.name ?? 'Einsatz'}
+                            </strong>
+                          </div>
+                          <span className="planner-entry-chip">
+                            {dayEditor.mode === 'create'
+                              ? 'Neu'
+                              : dayEditor.mode === 'move'
+                                ? 'Verschieben'
+                                : 'Bearbeiten'}
                           </span>
-                        </article>
-                      ) : null}
+                        </div>
 
-                      {scheduleEntries
-                        .filter((entry) => getScheduleEntryDay(entry) === day)
-                        .map((entry) => {
-                          const customer = customersById[entry.customer_id]
-                          const startTime = getScheduleEntryStartTime(entry)
-                          const endTime = getScheduleEntryEndTime(entry)
-                          const startIndex = getTimeIndex(startTime)
-                          const endIndex = getTimeIndex(endTime)
-                          const span = Math.max(endIndex - startIndex, 1)
-                          const isCompactEntry = span === 1
-                          const showDurationChip = span >= 3
-                          const showTimeRange = span >= 2
-                          const showAddress = span >= 3
-                          const isMovingEntry =
-                            interaction?.mode === 'move' && interaction.entryId === entry.id
-                          const isResizingEntry =
-                            interaction?.mode === 'resize' && interaction.entryId === entry.id
+                        {activeEditorCustomer?.address ? (
+                          <span className="planner-time-editor-day">
+                            {activeEditorCustomer.address}
+                          </span>
+                        ) : null}
 
-                          return (
-                            <article
-                              key={entry.id}
-                              className={`planner-entry-card${
-                                isMovingEntry ? ' planner-entry-card-moving' : ''
-                              }${isResizingEntry ? ' planner-entry-card-resizing' : ''}${
-                                isCompactEntry ? ' planner-entry-card-compact' : ''
-                              }`}
-                              style={{
-                                '--entry-start': String(startIndex),
-                                '--entry-span': String(span),
-                                backgroundColor: customer?.color ?? '#334155',
-                                color: getReadableTextColor(customer?.color ?? '#334155'),
-                              }}
-                              title={`${customer?.name ?? `Kunde #${entry.customer_id}`} · ${startTime} - ${endTime}${
-                                customer?.address ? ` · ${customer.address}` : ''
-                              }`}
-                              onPointerDown={(event) => handleEntryPointerDown(entry, event)}
-                            >
-                              {showDurationChip ? (
-                                <div className="planner-entry-topline">
-                                  <span className="planner-entry-chip">
-                                    {formatDurationLabel(startTime, endTime, getTimeIndex)}
-                                  </span>
-                                </div>
+                        <div className="planner-time-editor-fields">
+                          <label className="planner-time-editor-field">
+                            <span>Von</span>
+                            <input
+                              type="time"
+                              step="60"
+                              value={dayEditor.startTime}
+                              onChange={(event) =>
+                                handleEditorFieldChange('startTime', event.target.value)
+                              }
+                            />
+                          </label>
+                          <label className="planner-time-editor-field">
+                            <span>Bis</span>
+                            <input
+                              type="time"
+                              step="60"
+                              value={dayEditor.endTime}
+                              onChange={(event) =>
+                                handleEditorFieldChange('endTime', event.target.value)
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        {editorValidation?.message ? (
+                          <p
+                            className={`planner-time-editor-note${
+                              editorValidation.tone === 'invalid'
+                                ? ' planner-time-editor-note-invalid'
+                                : ''
+                            }${
+                              editorValidation.tone === 'valid'
+                                ? ' planner-time-editor-note-valid'
+                                : ''
+                            }`}
+                          >
+                            {editorValidation.message}
+                          </p>
+                        ) : null}
+
+                        <div className="planner-time-editor-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={handleEditorCancel}
+                          >
+                            Abbrechen
+                          </button>
+                          <button
+                            type="submit"
+                            className="action-button"
+                            disabled={!editorValidation?.isValid || isSavingSchedule}
+                          >
+                            {isSavingSchedule ? 'Speichert...' : 'Speichern'}
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
+
+                    {dayEntries.length > 0 ? (
+                      dayEntries.map((entry) => {
+                        const customer = customersById[entry.customer_id]
+                        const startTime = getScheduleEntryStartTime(entry)
+                        const endTime = getScheduleEntryEndTime(entry)
+                        const durationLabel = formatDurationLabel(startTime, endTime)
+                        const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
+                        const isMovingEntry =
+                          interaction?.mode === 'move' && interaction.entryId === entry.id
+                        const isEditingEntry = editorDraft?.entryId === entry.id
+
+                        return (
+                          <article
+                            key={entry.id}
+                            className={`planner-entry-card${
+                              isMovingEntry || isEditingEntry ? ' planner-entry-card-moving' : ''
+                            }`}
+                            style={{
+                              backgroundColor: customer?.color ?? '#334155',
+                              color: getReadableTextColor(customer?.color ?? '#334155'),
+                            }}
+                            title={`${customer?.name ?? `Kunde #${entry.customer_id}`} · ${timeRangeLabel}${
+                              customer?.address ? ` · ${customer.address}` : ''
+                            }`}
+                            onPointerDown={(event) => handleEntryPointerDown(entry, event)}
+                          >
+                            <div className="planner-entry-topline">
+                              {durationLabel ? (
+                                <span className="planner-entry-chip">{durationLabel}</span>
                               ) : null}
+                              <span className="planner-entry-time">{timeRangeLabel}</span>
+                            </div>
+                            <strong className="planner-entry-name">
+                              {customer?.name ?? `Kunde #${entry.customer_id}`}
+                            </strong>
+                            {customer?.address ? (
+                              <span className="planner-entry-address">{customer.address}</span>
+                            ) : null}
+                            <div className="planner-entry-actions">
+                              <button
+                                type="button"
+                                className="planner-entry-edit"
+                                aria-label="Zeit bearbeiten"
+                                disabled={isSavingSchedule}
+                                onClick={() => openEditorForEntry(entry)}
+                              >
+                                Zeit
+                              </button>
                               <button
                                 type="button"
                                 className="planner-entry-delete"
                                 aria-label="Einsatz entfernen"
                                 disabled={isSavingSchedule}
-                                onClick={() => onDeleteScheduleEntry(entry.id)}
+                                onClick={() => handleDeleteScheduleEntry(entry.id)}
                               >
                                 ×
                               </button>
-                              <strong className="planner-entry-name">
-                                {customer?.name ?? `Kunde #${entry.customer_id}`}
-                              </strong>
-                              {showTimeRange ? (
-                                <span className="planner-entry-time">
-                                  {startTime} - {endTime}
-                                </span>
-                              ) : null}
-                              {customer?.address && showAddress && !isCompactEntry ? (
-                                <span className="planner-entry-address">{customer.address}</span>
-                              ) : null}
-                              <button
-                                type="button"
-                                className="planner-entry-resize-handle"
-                                aria-label="Einsatzdauer anpassen"
-                                onPointerDown={(event) => handleResizePointerDown(entry, event)}
-                              >
-                                <span aria-hidden="true">{isCompactEntry ? '⇵' : '↕'}</span>
-                              </button>
-                            </article>
-                          )
-                        })}
-                    </section>
-                  )
-                })}
-              </div>
+                            </div>
+                          </article>
+                        )
+                      })
+                    ) : !dayEditor && !isPreviewDay ? (
+                      <p className="planner-day-empty">Auftrag hier ablegen.</p>
+                    ) : null}
+                  </section>
+                )
+              })}
             </div>
           </div>
 
           {selectedEmployeeId === null ? (
             <div className="planner-overlay-message">
               <strong>Mitarbeiter auswählen</strong>
-              <span>Danach lassen sich Kunden direkt in die Woche ziehen.</span>
+              <span>Danach lassen sich Kunden direkt auf einen Wochentag ziehen.</span>
             </div>
           ) : null}
 
-          {interaction ? (
+          {interaction?.dragActivated ? (
             <div
               className="planner-drag-ghost"
               style={{
@@ -706,11 +795,9 @@ function PlanningWorkspace({
             >
               <strong>{activePreviewCustomer?.name ?? 'Einsatz'}</strong>
               <span>
-                {interaction.mode === 'resize'
-                  ? 'Größe anpassen'
-                  : interaction.mode === 'move'
-                    ? 'Einsatz verschieben'
-                    : 'Kunde einplanen'}
+                {interaction.mode === 'move'
+                  ? 'Auftrag auf Wochentag verschieben'
+                  : 'Kunde auf Wochentag einplanen'}
               </span>
             </div>
           ) : null}

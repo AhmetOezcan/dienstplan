@@ -60,10 +60,10 @@ def ensure_schedule_references_exist(data: dict, account_id: int, db: Session) -
 
 
 def validate_schedule_times(start_time, end_time) -> None:
-    if start_time >= end_time:
+    if start_time == end_time:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="start_time must be earlier than end_time",
+            detail="start_time and end_time must be different",
         )
 
 
