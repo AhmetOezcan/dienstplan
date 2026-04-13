@@ -45,3 +45,8 @@ app.include_router(schedules_router)
 def root():
     with engine.connect() as connection:
         return {"message": "Backend und Datenbank verbunden"}
+
+
+@app.get("/health")
+def healthcheck():
+    return {"status": "ok"}
