@@ -91,6 +91,10 @@ function formatDurationLabel(startTime, endTime) {
   }).format(durationHours)} Std.`
 }
 
+function formatAssignmentCount(count) {
+  return count === 1 ? '1 Einsatz' : `${count} Einsätze`
+}
+
 function PlanningWorkspace({
   calendarWeek,
   customersAvailableForWidget,
@@ -534,7 +538,11 @@ function PlanningWorkspace({
             <button
               type="button"
               className="secondary-button widget-print-button"
-              onClick={() => printSection('dienstplan-widget')}
+              onClick={() =>
+                printSection('dienstplan-widget', {
+                  pageStyle: '@page { size: A4 landscape; margin: 6mm; }',
+                })
+              }
             >
               Drucken
             </button>
@@ -801,6 +809,108 @@ function PlanningWorkspace({
               </span>
             </div>
           ) : null}
+        </div>
+
+        <div className="planner-print-sheet" aria-hidden="true">
+          <header className="planner-print-header">
+            <strong className="planner-print-title">Dienstplan</strong>
+            <div className="planner-print-meta">
+              <span>
+                <strong>Mitarbeiter</strong> {selectedEmployeeLabel}
+              </span>
+              <span>
+                <strong>Woche</strong> {dashboardWeekLabel}
+              </span>
+              <span>
+                <strong>Datum</strong> {scheduleDateRangeLabel || '-'}
+              </span>
+              <span>
+                <strong>Einsätze</strong> {String(scheduledAssignmentsCount).padStart(2, '0')}
+              </span>
+            </div>
+          </header>
+
+          {selectedEmployeeId !== null ? (
+            <table className="planner-print-table">
+              <colgroup>
+                <col className="planner-print-col-employee" />
+                {weekdays.map((day) => (
+                  <col key={`planner-print-col-${day}`} className="planner-print-col-day" />
+                ))}
+              </colgroup>
+
+              <thead>
+                <tr>
+                  <th scope="col">Mitarbeiter</th>
+                  {weekdays.map((day) => {
+                    const dayEntries = entriesByDay[day] ?? []
+
+                    return (
+                      <th key={`planner-print-head-${day}`} scope="col">
+                        <div className="planner-print-day-heading">
+                          <span className="planner-print-day-label">{day}</span>
+                          <span className="planner-print-day-count">
+                            {String(dayEntries.length).padStart(2, '0')} geplant
+                          </span>
+                        </div>
+                      </th>
+                    )
+                  })}
+                </tr>
+              </thead>
+
+              <tbody>
+                <tr>
+                  <th scope="row" className="planner-print-employee-cell">
+                    <strong>{selectedEmployeeLabel}</strong>
+                    <span>{formatAssignmentCount(scheduledAssignmentsCount)} in dieser Woche</span>
+                  </th>
+
+                  {weekdays.map((day) => {
+                    const dayEntries = entriesByDay[day] ?? []
+
+                    return (
+                      <td key={`planner-print-cell-${day}`} className="planner-print-cell">
+                        {dayEntries.length > 0 ? (
+                          <div className="planner-print-assignment-list">
+                            {dayEntries.map((entry) => {
+                              const customer = customersById[entry.customer_id]
+                              const startTime = getScheduleEntryStartTime(entry)
+                              const endTime = getScheduleEntryEndTime(entry)
+                              const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
+
+                              return (
+                                <article
+                                  key={`planner-print-entry-${entry.id}`}
+                                  className="planner-print-assignment"
+                                  style={{
+                                    '--planner-print-accent': customer?.color ?? '#334155',
+                                  }}
+                                >
+                                  <span className="planner-print-assignment-time">
+                                    {timeRangeLabel}
+                                  </span>
+                                  <strong>{customer?.name ?? `Kunde #${entry.customer_id}`}</strong>
+                                  {customer?.address ? <span>{customer.address}</span> : null}
+                                </article>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <span className="planner-print-empty">-</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          ) : (
+            <div className="planner-print-placeholder">
+              <strong>Kein Mitarbeiter ausgewählt</strong>
+              <span>Für den Ausdruck zuerst einen Mitarbeiter wählen.</span>
+            </div>
+          )}
         </div>
       </section>
 

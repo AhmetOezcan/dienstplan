@@ -1207,6 +1207,161 @@ button:not(:disabled) {
   font-weight: 600;
 }
 
+.planner-print-sheet {
+  display: none;
+}
+
+.planner-print-header {
+  display: block;
+  width: 100%;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.planner-print-title {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+}
+
+.planner-print-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 0.7rem;
+  color: #334155;
+}
+
+.planner-print-meta strong {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.planner-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.planner-print-col-employee {
+  width: 190px;
+}
+
+.planner-print-col-day {
+  width: calc((100% - 190px) / 7);
+}
+
+.planner-print-table th,
+.planner-print-table td {
+  border: 1px solid #cbd5e1;
+  padding: 6px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.planner-print-table thead th {
+  background: #eef2f7;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.planner-print-day-heading,
+.planner-print-employee-cell,
+.planner-print-assignment-list,
+.planner-print-placeholder {
+  display: flex;
+  flex-direction: column;
+}
+
+.planner-print-day-heading {
+  gap: 3px;
+}
+
+.planner-print-day-label {
+  font-size: 0.68rem;
+}
+
+.planner-print-day-count {
+  font-size: 0.62rem;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #475569;
+}
+
+.planner-print-employee-cell {
+  gap: 2px;
+  background: #f8fafc;
+}
+
+.planner-print-table thead th:first-child,
+.planner-print-employee-cell {
+  border-right: 2px solid #94a3b8;
+}
+
+.planner-print-employee-cell strong {
+  font-size: 0.8rem;
+}
+
+.planner-print-employee-cell span {
+  font-size: 0.68rem;
+  color: #475569;
+}
+
+.planner-print-cell {
+  font-size: 0.68rem;
+}
+
+.planner-print-assignment-list {
+  gap: 4px;
+}
+
+.planner-print-assignment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 4px 4px 6px;
+  border-left: 3px solid var(--planner-print-accent, var(--accent));
+  background: #ffffff;
+}
+
+.planner-print-assignment-time {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #475569;
+}
+
+.planner-print-assignment strong {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #0f172a;
+}
+
+.planner-print-assignment span:last-child {
+  font-size: 0.64rem;
+  line-height: 1.35;
+  color: #64748b;
+}
+
+.planner-print-empty {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.planner-print-placeholder {
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+}
+
 .hours-chart-shell {
   display: flex;
   flex-direction: column;
@@ -2262,6 +2417,17 @@ button:not(:disabled) {
     display: block;
   }
 
+  body[data-print-target='dienstplan-widget'] .dashboard-shell,
+  body[data-print-target='dienstplan-widget'] #dienstplan-widget {
+    padding: 0 !important;
+  }
+
+  body[data-print-target='dienstplan-widget'] .widget-topline,
+  body[data-print-target='dienstplan-widget'] .schedule-meta-row,
+  body[data-print-target='dienstplan-widget'] .planner-board {
+    display: none !important;
+  }
+
   body[data-print-target='wochenuebersicht-widget'] #wochenuebersicht-widget,
   body[data-print-target='dienstplan-widget'] #dienstplan-widget {
     width: 100%;
@@ -2278,10 +2444,34 @@ button:not(:disabled) {
     display: table-header-group;
   }
 
+  body[data-print-target='dienstplan-widget'] .planner-print-sheet {
+    display: flex !important;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin: 0;
+  }
+
+  body[data-print-target='dienstplan-widget'] .planner-print-table {
+    font-size: 10px;
+  }
+
+  body[data-print-target='dienstplan-widget'] .planner-print-table thead {
+    display: table-header-group;
+  }
+
   body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table tr,
   body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table td,
   body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table th,
   body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-assignment {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body[data-print-target='dienstplan-widget'] .planner-print-table tr,
+  body[data-print-target='dienstplan-widget'] .planner-print-table td,
+  body[data-print-target='dienstplan-widget'] .planner-print-table th,
+  body[data-print-target='dienstplan-widget'] .planner-print-assignment {
     break-inside: avoid;
     page-break-inside: avoid;
   }
