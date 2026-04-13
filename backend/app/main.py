@@ -2,6 +2,8 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from app.database import engine
 
 from app.routes.auth import router as auth_router
@@ -45,3 +47,13 @@ app.include_router(schedules_router)
 def root():
     with engine.connect() as connection:
         return {"message": "Backend und Datenbank verbunden"}
+
+
+@app.get("/health")
+def health():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "unhealthy"})
+    return {"status": "healthy"}
