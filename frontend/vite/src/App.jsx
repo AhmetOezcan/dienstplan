@@ -85,7 +85,7 @@ function getDefaultApiBaseUrl() {
     return ''
   }
 
-  return LOCAL_API_HOSTNAMES.has(window.location.hostname) ? 'http://localhost:8000' : ''
+  return LOCAL_API_HOSTNAMES.has(window.location.hostname) ? 'http://localhost:8000' : '/api'
 }
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL) || getDefaultApiBaseUrl()
