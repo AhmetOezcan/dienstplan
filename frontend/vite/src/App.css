@@ -2350,6 +2350,19 @@ button:not(:disabled) {
 }
 
 @media print {
+  html,
+  body,
+  #root,
+  .app,
+  .dashboard-shell,
+  .dashboard-widget,
+  .planning-workspace-layout,
+  #dienstplan-widget,
+  #wochenuebersicht-widget {
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
   body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
@@ -2432,8 +2445,8 @@ button:not(:disabled) {
   body[data-print-target='dienstplan-widget'] #dienstplan-widget {
     width: 100%;
     margin: 0;
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
   }
 
   body[data-print-target='wochenuebersicht-widget'] .weekly-overview-print-table {
