@@ -2,35 +2,137 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { printSection } from '../utils/printSection'
 import {
   getDurationHoursBetweenTimes,
-  getNormalizedTimeRange,
-  getScheduleIntervalBounds,
   getScheduleTimeRangeLabel,
 } from '../utils/scheduleTime'
+import {
+  getDisplayTimeRangeForShift,
+  getScheduleEntryEndTime as getScheduleEntryEndTimeValue,
+  getScheduleEntryStartTime as getScheduleEntryStartTimeValue,
+  getShiftTimelineBounds,
+  getTimeValueFromMinutes,
+} from '../utils/scheduleShift'
 
 const AUTO_SCROLL_EDGE = 72
 const AUTO_SCROLL_STEP = 22
 const WINDOW_AUTO_SCROLL_EDGE = 72
 const WINDOW_AUTO_SCROLL_STEP = 18
 const DRAG_ACTIVATION_DISTANCE = 6
+const TIMELINE_INTERVAL_MINUTES = 60
+const TIMELINE_MIN_DURATION_MINUTES = 60
+
+function getTimelineMetrics(viewportWidth) {
+  const normalizedViewportWidth =
+    typeof viewportWidth === 'number' && viewportWidth > 0 ? viewportWidth : 1440
+
+  if (normalizedViewportWidth <= 640) {
+    return {
+      hourHeight: 40,
+      timeAxisWidth: 68,
+      dayMinWidth: 126,
+      maxHeight: 660,
+      headerHeight: 48,
+      entryInset: 3,
+      columnPadding: 10,
+      edgePadding: 0,
+    }
+  }
+
+  if (normalizedViewportWidth <= 900) {
+    return {
+      hourHeight: 44,
+      timeAxisWidth: 72,
+      dayMinWidth: 136,
+      maxHeight: 740,
+      headerHeight: 52,
+      entryInset: 3,
+      columnPadding: 12,
+      edgePadding: 0,
+    }
+  }
+
+  if (normalizedViewportWidth <= 1280) {
+    return {
+      hourHeight: 48,
+      timeAxisWidth: 76,
+      dayMinWidth: 142,
+      maxHeight: 800,
+      headerHeight: 54,
+      entryInset: 4,
+      columnPadding: 12,
+      edgePadding: 0,
+    }
+  }
+
+  return {
+    hourHeight: 52,
+    timeAxisWidth: 80,
+    dayMinWidth: 146,
+    maxHeight: 860,
+    headerHeight: 56,
+    entryInset: 4,
+    columnPadding: 12,
+    edgePadding: 0,
+  }
+}
 
 function getScheduleEntryDay(entry) {
-  return entry.day_of_week ?? entry.day ?? ''
+  return entry.planner_day_of_week ?? entry.day_of_week ?? entry.day ?? ''
 }
 
 function getScheduleEntryStartTime(entry) {
-  if (entry.time) {
-    return entry.time
-  }
-
-  return entry.start_time?.slice(0, 5) ?? ''
+  return getScheduleEntryStartTimeValue(entry)
 }
 
 function getScheduleEntryEndTime(entry) {
-  return entry.end_time?.slice(0, 5) ?? ''
+  return getScheduleEntryEndTimeValue(entry)
 }
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
+}
+
+function roundMinutesDownToInterval(minutes) {
+  return Math.floor(minutes / TIMELINE_INTERVAL_MINUTES) * TIMELINE_INTERVAL_MINUTES
+}
+
+function roundMinutesUpToInterval(minutes) {
+  return Math.ceil(minutes / TIMELINE_INTERVAL_MINUTES) * TIMELINE_INTERVAL_MINUTES
+}
+
+function getClampedStartMinutes(minutes, timelineStartMinutes, timelineEndMinutes) {
+  return clamp(
+    roundMinutesDownToInterval(minutes),
+    timelineStartMinutes,
+    timelineEndMinutes - TIMELINE_MIN_DURATION_MINUTES,
+  )
+}
+
+function getPixelsFromDuration(minutes, hourHeight) {
+  return (minutes / 60) * hourHeight
+}
+
+function getPixelsFromMinutes(minutes, timelineStartMinutes, hourHeight, edgePadding = 0) {
+  return edgePadding + getPixelsFromDuration(minutes - timelineStartMinutes, hourHeight)
+}
+
+function getMinutesFromOffsetPixels(pixels, hourHeight) {
+  return (pixels / hourHeight) * 60
+}
+
+function getMinutesFromPixels(pixels, timelineStartMinutes, hourHeight, edgePadding = 0) {
+  return (
+    timelineStartMinutes +
+    getMinutesFromOffsetPixels(Math.max(pixels - edgePadding, 0), hourHeight)
+  )
+}
+
+function buildTimelineHourMarkers(timelineStartMinutes, timelineEndMinutes) {
+  const timelineVisibleDurationMinutes = timelineEndMinutes - timelineStartMinutes
+
+  return Array.from(
+    { length: timelineVisibleDurationMinutes / 60 + 1 },
+    (_, index) => timelineStartMinutes + index * 60,
+  )
 }
 
 function getReadableTextColor(backgroundColor) {
@@ -72,7 +174,15 @@ function isSamePreview(left, right) {
     return false
   }
 
-  return left.dayOfWeek === right.dayOfWeek
+  return (
+    left.mode === right.mode &&
+    left.dayOfWeek === right.dayOfWeek &&
+    left.startMinutes === right.startMinutes &&
+    left.endMinutes === right.endMinutes &&
+    left.customerId === right.customerId &&
+    left.entryId === right.entryId &&
+    left.isValid === right.isValid
+  )
 }
 
 function formatDurationLabel(startTime, endTime) {
@@ -97,6 +207,75 @@ function formatAssignmentCount(count) {
   return count === 1 ? '1 Einsatz' : `${count} Einsätze`
 }
 
+function getDragGhostLabel(mode, hasPreview) {
+  if (mode === 'move') {
+    return hasPreview ? 'Loslassen zum Verschieben' : 'Einsatz auf neue Zeit ziehen'
+  }
+
+  if (mode === 'resize') {
+    return 'Unten ziehen, um die Dauer anzupassen'
+  }
+
+  return hasPreview ? 'Loslassen zum Einplanen' : 'In den Plan ziehen'
+}
+
+function getPreviewStatusLabel(mode) {
+  if (mode === 'move') {
+    return 'Verschieben'
+  }
+
+  if (mode === 'resize') {
+    return 'Dauer'
+  }
+
+  return 'Neu'
+}
+
+function getPreviewActionLabel(mode) {
+  if (mode === 'move') {
+    return 'Loslassen zum Verschieben'
+  }
+
+  if (mode === 'resize') {
+    return 'Loslassen zum Speichern'
+  }
+
+  return 'Loslassen zum Einplanen'
+}
+
+function getEntryLayout(
+  startTime,
+  endTime,
+  shiftType,
+  timelineStartMinutes,
+  timelineEndMinutes,
+  hourHeight,
+  edgePadding,
+) {
+  const normalizedTimeRange = getDisplayTimeRangeForShift(startTime, endTime, shiftType)
+
+  if (!normalizedTimeRange) {
+    return null
+  }
+
+  const visibleStartMinutes = Math.max(normalizedTimeRange.startMinutes, timelineStartMinutes)
+  const visibleEndMinutes = Math.min(normalizedTimeRange.endMinutes, timelineEndMinutes)
+  const visibleDurationMinutes = Math.max(visibleEndMinutes - visibleStartMinutes, 0)
+
+  return {
+    startMinutes: normalizedTimeRange.startMinutes,
+    endMinutes: normalizedTimeRange.endMinutes,
+    visibleStartMinutes,
+    visibleEndMinutes,
+    visibleDurationMinutes,
+    top: getPixelsFromMinutes(visibleStartMinutes, timelineStartMinutes, hourHeight, edgePadding),
+    height: getPixelsFromDuration(visibleDurationMinutes, hourHeight),
+    isTruncated:
+      normalizedTimeRange.startMinutes < timelineStartMinutes ||
+      normalizedTimeRange.endMinutes > timelineEndMinutes,
+  }
+}
+
 function PlanningWorkspace({
   calendarWeek,
   customersAvailableForWidget,
@@ -104,6 +283,7 @@ function PlanningWorkspace({
   customersById,
   dashboardWeekLabel,
   isSavingSchedule,
+  hasScheduleConflict: checkScheduleConflict,
   onAddCustomerToWidget,
   onCalendarWeekChange,
   onCopyPreviousWeek,
@@ -112,11 +292,17 @@ function PlanningWorkspace({
   onMoveScheduleEntry,
   onRemoveCustomerFromWidget,
   onYearChange,
+  plannerId,
+  plannerTitle,
+  plannerViewSwitcher,
   scheduleDateRangeLabel,
   scheduleEntries,
   selectedEmployeeId,
   selectedEmployeeLabel,
   sidebarContent,
+  shiftType,
+  timelineEndMinutes,
+  timelineStartMinutes,
   widgetCustomers,
   weekdays,
   year,
@@ -125,7 +311,9 @@ function PlanningWorkspace({
   const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false)
   const [pointerPosition, setPointerPosition] = useState({ x: 0, y: 0 })
   const [previewPlacement, setPreviewPlacement] = useState(null)
-  const [editorDraft, setEditorDraft] = useState(null)
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth,
+  )
   const scrollAreaRef = useRef(null)
   const boardRef = useRef(null)
   const dragPointerRef = useRef({ x: 0, y: 0 })
@@ -134,93 +322,71 @@ function PlanningWorkspace({
   const scheduledAssignmentsCount = scheduleEntries.length
   const isPlannerInteractive = selectedEmployeeId !== null && !isSavingSchedule
   const activePreviewCustomer =
-    interaction?.customerId !== undefined ? customersById[interaction.customerId] ?? null : null
-  const activeEditorCustomer =
-    editorDraft?.customerId !== undefined ? customersById[editorDraft.customerId] ?? null : null
+    previewPlacement?.customerId !== undefined
+      ? customersById[previewPlacement.customerId] ?? null
+      : interaction?.customerId !== undefined
+        ? customersById[interaction.customerId] ?? null
+        : null
   const canAddCustomersToWidget = customersAvailableForWidget.length > 0
   const isCustomerPickerVisible = isCustomerPickerOpen && canAddCustomersToWidget
-  const weekdayNumberByName = Object.fromEntries(
-    weekdays.map((day, index) => [day, index + 1]),
+  const fallbackTimelineBounds = getShiftTimelineBounds(shiftType)
+  const resolvedTimelineStartMinutes =
+    typeof timelineStartMinutes === 'number'
+      ? timelineStartMinutes
+      : fallbackTimelineBounds.startMinutes
+  const rawTimelineEndMinutes =
+    typeof timelineEndMinutes === 'number'
+      ? timelineEndMinutes
+      : fallbackTimelineBounds.endMinutes
+  const resolvedTimelineEndMinutes =
+    rawTimelineEndMinutes <= resolvedTimelineStartMinutes
+      ? rawTimelineEndMinutes + 24 * 60
+      : rawTimelineEndMinutes
+  const timelineVisibleDurationMinutes =
+    resolvedTimelineEndMinutes - resolvedTimelineStartMinutes
+  const timelineHourMarkers = buildTimelineHourMarkers(
+    resolvedTimelineStartMinutes,
+    resolvedTimelineEndMinutes,
   )
   const entriesByDay = Object.fromEntries(
     weekdays.map((day) => [day, scheduleEntries.filter((entry) => getScheduleEntryDay(entry) === day)]),
   )
-
-  const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
-    const candidateInterval = getScheduleIntervalBounds(
-      dayOfWeek,
-      startTime,
-      endTime,
-      weekdayNumberByName,
-    )
-
-    if (!candidateInterval) {
-      return true
-    }
-
-    return scheduleEntries.some((entry) => {
-      if (entry.id === ignoreEntryId) {
-        return false
-      }
-
-      const entryInterval = getScheduleIntervalBounds(
-        getScheduleEntryDay(entry),
-        getScheduleEntryStartTime(entry),
-        getScheduleEntryEndTime(entry),
-        weekdayNumberByName,
-      )
-
-      if (!entryInterval) {
-        return false
-      }
-
-      return candidateInterval.start < entryInterval.end && entryInterval.start < candidateInterval.end
-    })
+  const timelineMetrics = getTimelineMetrics(viewportWidth)
+  const boardShellStyle = {
+    '--planner-hour-height': `${timelineMetrics.hourHeight}px`,
+    '--planner-board-height': `${getPixelsFromDuration(
+      timelineVisibleDurationMinutes,
+      timelineMetrics.hourHeight,
+    ) + timelineMetrics.edgePadding * 2}px`,
+    '--planner-time-axis-width': `${timelineMetrics.timeAxisWidth}px`,
+    '--planner-entry-inset': `${timelineMetrics.entryInset}px`,
+    '--planner-column-padding': `${timelineMetrics.columnPadding}px`,
+    '--planner-header-height': `${timelineMetrics.headerHeight}px`,
+    '--planner-max-height': `${timelineMetrics.maxHeight}px`,
+    '--planner-edge-padding': `${timelineMetrics.edgePadding}px`,
+    minWidth: `${timelineMetrics.timeAxisWidth + weekdays.length * timelineMetrics.dayMinWidth}px`,
   }
-
-  const getEditorValidation = (draft) => {
-    if (!draft?.startTime || !draft?.endTime) {
-      return {
-        isValid: false,
-        tone: 'info',
-        message: 'Zeit von und bis manuell eintragen.',
-      }
-    }
-
-    const normalizedTimeRange = getNormalizedTimeRange(draft.startTime, draft.endTime)
-
-    if (!normalizedTimeRange) {
-      return {
-        isValid: false,
-        tone: 'invalid',
-        message:
-          'Bitte gültige Uhrzeiten eintragen. Für Einsätze über Mitternacht darf die Bis-Uhrzeit früher sein.',
-      }
-    }
-
-    if (
-      hasScheduleConflict({
-        dayOfWeek: draft.dayOfWeek,
-        startTime: draft.startTime,
-        endTime: draft.endTime,
-        ignoreEntryId: draft.entryId ?? null,
-      })
-    ) {
-      return {
-        isValid: false,
-        tone: 'invalid',
-        message: 'Dieses Zeitfenster ist bereits belegt.',
-      }
-    }
-
-    return {
-      isValid: true,
-      tone: 'valid',
-      message: 'Zeitfenster frei. Auftrag kann gespeichert werden.',
-    }
+  const dayTrackStyle = {
+    gridTemplateColumns: `repeat(${weekdays.length}, minmax(${timelineMetrics.dayMinWidth}px, 1fr))`,
   }
+  const plannerRangeLabel = `${getTimeValueFromMinutes(
+    resolvedTimelineStartMinutes,
+  )}-${getTimeValueFromMinutes(resolvedTimelineEndMinutes)} Uhr`
 
-  const editorValidation = editorDraft ? getEditorValidation(editorDraft) : null
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const handleWindowResize = () => {
+      setViewportWidth(window.innerWidth)
+    }
+
+    window.addEventListener('resize', handleWindowResize)
+    return () => {
+      window.removeEventListener('resize', handleWindowResize)
+    }
+  }, [])
 
   const getAutoScrollDelta = (scrollElement, clientX, clientY) => {
     const scrollRect = scrollElement.getBoundingClientRect()
@@ -280,9 +446,8 @@ function PlanningWorkspace({
 
   const getPlacementPreviewFromPointer = (clientX, clientY) => {
     const boardElement = boardRef.current
-    const scrollElement = scrollAreaRef.current
 
-    if (!boardElement || !scrollElement) {
+    if (!boardElement) {
       return null
     }
 
@@ -296,17 +461,152 @@ function PlanningWorkspace({
       return null
     }
 
-    const contentX = clientX - boardRect.left + scrollElement.scrollLeft
-    const dayWidth = boardElement.scrollWidth / weekdays.length
+    const contentX = clientX - boardRect.left
+    const contentY = clientY - boardRect.top
+    const dayWidth = boardRect.width / weekdays.length
     const dayIndex = clamp(Math.floor(contentX / dayWidth), 0, weekdays.length - 1)
 
     return {
       dayOfWeek: weekdays[dayIndex],
+      rawMinutes: clamp(
+        getMinutesFromPixels(
+          contentY,
+          resolvedTimelineStartMinutes,
+          timelineMetrics.hourHeight,
+          timelineMetrics.edgePadding,
+        ),
+        resolvedTimelineStartMinutes,
+        resolvedTimelineEndMinutes,
+      ),
     }
   }
 
-  const syncPreviewPlacement = useEffectEvent((clientX, clientY) => {
-    const nextPreview = getPlacementPreviewFromPointer(clientX, clientY)
+  const buildCreatePreview = (placement, currentInteraction) => {
+    if (!placement) {
+      return null
+    }
+
+    const startMinutes = getClampedStartMinutes(
+      placement.rawMinutes,
+      resolvedTimelineStartMinutes,
+      resolvedTimelineEndMinutes,
+    )
+    const endMinutes = Math.min(
+      startMinutes + TIMELINE_MIN_DURATION_MINUTES,
+      resolvedTimelineEndMinutes,
+    )
+    const startTime = getTimeValueFromMinutes(startMinutes)
+    const endTime = getTimeValueFromMinutes(endMinutes)
+
+    return {
+      mode: 'create',
+      customerId: currentInteraction.customerId,
+      dayOfWeek: placement.dayOfWeek,
+      startMinutes,
+      endMinutes,
+      startTime,
+      endTime,
+      isValid: !checkScheduleConflict({
+        dayOfWeek: placement.dayOfWeek,
+        startTime,
+        endTime,
+        shiftType,
+      }),
+    }
+  }
+
+  const buildMovePreview = (placement, currentInteraction) => {
+    if (!placement) {
+      return null
+    }
+
+    const maxStartMinutes = Math.max(
+      resolvedTimelineStartMinutes,
+      Math.min(
+        resolvedTimelineEndMinutes - TIMELINE_MIN_DURATION_MINUTES,
+        resolvedTimelineEndMinutes - currentInteraction.durationMinutes,
+      ),
+    )
+    const startMinutes = clamp(
+      roundMinutesDownToInterval(placement.rawMinutes - currentInteraction.pointerOffsetMinutes),
+      resolvedTimelineStartMinutes,
+      maxStartMinutes,
+    )
+    const endMinutes = startMinutes + currentInteraction.durationMinutes
+    const startTime = getTimeValueFromMinutes(startMinutes)
+    const endTime = getTimeValueFromMinutes(endMinutes)
+
+    return {
+      mode: 'move',
+      entryId: currentInteraction.entryId,
+      customerId: currentInteraction.customerId,
+      dayOfWeek: placement.dayOfWeek,
+      startMinutes,
+      endMinutes,
+      startTime,
+      endTime,
+      isValid: !checkScheduleConflict({
+        dayOfWeek: placement.dayOfWeek,
+        startTime,
+        endTime,
+        ignoreEntryId: currentInteraction.entryId,
+        shiftType,
+      }),
+    }
+  }
+
+  const buildResizePreview = (placement, currentInteraction) => {
+    if (!placement) {
+      return null
+    }
+
+    const endMinutes = clamp(
+      Math.max(
+        roundMinutesUpToInterval(placement.rawMinutes),
+        currentInteraction.startMinutes + TIMELINE_MIN_DURATION_MINUTES,
+      ),
+      currentInteraction.startMinutes + TIMELINE_MIN_DURATION_MINUTES,
+      resolvedTimelineEndMinutes,
+    )
+    const startTime = getTimeValueFromMinutes(currentInteraction.startMinutes)
+    const endTime = getTimeValueFromMinutes(endMinutes)
+
+    return {
+      mode: 'resize',
+      entryId: currentInteraction.entryId,
+      customerId: currentInteraction.customerId,
+      dayOfWeek: currentInteraction.dayOfWeek,
+      startMinutes: currentInteraction.startMinutes,
+      endMinutes,
+      startTime,
+      endTime,
+      isValid: !checkScheduleConflict({
+        dayOfWeek: currentInteraction.dayOfWeek,
+        startTime,
+        endTime,
+        ignoreEntryId: currentInteraction.entryId,
+        shiftType,
+      }),
+    }
+  }
+
+  const syncPreviewPlacement = useEffectEvent((clientX, clientY, interactionOverride = interaction) => {
+    if (!interactionOverride?.dragActivated) {
+      setPreviewPlacement(null)
+      return
+    }
+
+    const placement = getPlacementPreviewFromPointer(clientX, clientY)
+    let nextPreview = null
+
+    if (interactionOverride.mode === 'create') {
+      nextPreview = buildCreatePreview(placement, interactionOverride)
+    } else if (interactionOverride.mode === 'move') {
+      nextPreview = buildMovePreview(placement, interactionOverride)
+    } else if (interactionOverride.mode === 'resize') {
+      nextPreview = buildResizePreview(placement, interactionOverride)
+    }
+
     setPreviewPlacement((currentPreview) =>
       isSamePreview(currentPreview, nextPreview) ? currentPreview : nextPreview,
     )
@@ -402,7 +702,14 @@ function PlanningWorkspace({
       return
     }
 
+    let resolvedInteraction = interaction
+
     if (!interaction.dragActivated) {
+      resolvedInteraction = {
+        ...interaction,
+        dragActivated: true,
+      }
+
       setInteraction((currentInteraction) =>
         currentInteraction
           ? {
@@ -414,7 +721,7 @@ function PlanningWorkspace({
     }
 
     maybeAutoScroll(event.clientX, event.clientY)
-    syncPreviewPlacement(event.clientX, event.clientY)
+    syncPreviewPlacement(event.clientX, event.clientY, resolvedInteraction)
   })
 
   const handlePointerUp = useEffectEvent(() => {
@@ -430,26 +737,36 @@ function PlanningWorkspace({
     }
 
     if (activeInteraction.mode === 'create') {
-      setEditorDraft({
-        mode: 'create',
-        customerId: activeInteraction.customerId,
-        dayOfWeek: finalPreview.dayOfWeek,
-        startTime: '',
-        endTime: '',
-      })
+      void (async () => {
+        const wasCreated = await onCreateScheduleEntry({
+          customerId: activeInteraction.customerId,
+          dayOfWeek: finalPreview.dayOfWeek,
+          startTime: finalPreview.startTime,
+          endTime: finalPreview.endTime,
+          shiftType,
+        })
+
+        if (wasCreated) {
+          onRemoveCustomerFromWidget(activeInteraction.customerId)
+        }
+      })()
       return
     }
 
-    setEditorDraft({
-      mode: 'move',
+    if (
+      activeInteraction.originalDayOfWeek === finalPreview.dayOfWeek &&
+      activeInteraction.originalStartTime === finalPreview.startTime &&
+      activeInteraction.originalEndTime === finalPreview.endTime
+    ) {
+      return
+    }
+
+    void onMoveScheduleEntry({
       entryId: activeInteraction.entryId,
-      customerId: activeInteraction.customerId,
       dayOfWeek: finalPreview.dayOfWeek,
-      startTime: activeInteraction.originalStartTime,
-      endTime: activeInteraction.originalEndTime,
-      originalDayOfWeek: activeInteraction.originalDayOfWeek,
-      originalStartTime: activeInteraction.originalStartTime,
-      originalEndTime: activeInteraction.originalEndTime,
+      startTime: finalPreview.startTime,
+      endTime: finalPreview.endTime,
+      shiftType,
     })
   })
 
@@ -461,7 +778,8 @@ function PlanningWorkspace({
     const previousUserSelect = document.body.style.userSelect
     const previousCursor = document.body.style.cursor
     document.body.style.userSelect = 'none'
-    document.body.style.cursor = interaction.dragActivated ? 'grabbing' : 'default'
+    document.body.style.cursor =
+      interaction.mode === 'resize' ? 'ns-resize' : interaction.dragActivated ? 'grabbing' : 'default'
 
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp)
@@ -486,7 +804,6 @@ function PlanningWorkspace({
       return
     }
 
-    setEditorDraft(null)
     setPointerPosition({
       x: event.clientX,
       y: event.clientY,
@@ -510,9 +827,32 @@ function PlanningWorkspace({
       return
     }
 
+    const startTime = getScheduleEntryStartTime(entry)
+    const endTime = getScheduleEntryEndTime(entry)
+    const entryLayout = getEntryLayout(
+      startTime,
+      endTime,
+      shiftType,
+      resolvedTimelineStartMinutes,
+      resolvedTimelineEndMinutes,
+      timelineMetrics.hourHeight,
+      timelineMetrics.edgePadding,
+    )
+
+    if (!entryLayout) {
+      return
+    }
+
     event.preventDefault()
 
-    setEditorDraft(null)
+    const entryRect = event.currentTarget.getBoundingClientRect()
+    const pointerOffsetMinutes = clamp(
+      getMinutesFromOffsetPixels(event.clientY - entryRect.top, timelineMetrics.hourHeight) +
+        Math.max(entryLayout.visibleStartMinutes - entryLayout.startMinutes, 0),
+      0,
+      entryLayout.endMinutes - entryLayout.startMinutes,
+    )
+
     setPointerPosition({
       x: event.clientX,
       y: event.clientY,
@@ -526,8 +866,10 @@ function PlanningWorkspace({
       entryId: entry.id,
       customerId: entry.customer_id,
       originalDayOfWeek: getScheduleEntryDay(entry),
-      originalStartTime: getScheduleEntryStartTime(entry),
-      originalEndTime: getScheduleEntryEndTime(entry),
+      originalStartTime: startTime,
+      originalEndTime: endTime,
+      durationMinutes: roundMinutesUpToInterval(entryLayout.endMinutes - entryLayout.startMinutes),
+      pointerOffsetMinutes,
       originX: event.clientX,
       originY: event.clientY,
       dragActivated: false,
@@ -535,105 +877,103 @@ function PlanningWorkspace({
     setPreviewPlacement(null)
   }
 
-  const openEditorForEntry = (entry) => {
-    setInteraction(null)
-    setPreviewPlacement(null)
-    setEditorDraft({
-      mode: 'edit',
+  const handleResizePointerDown = (entry, event) => {
+    if (event.button !== 0 || isSavingSchedule) {
+      return
+    }
+
+    const startTime = getScheduleEntryStartTime(entry)
+    const endTime = getScheduleEntryEndTime(entry)
+    const entryLayout = getEntryLayout(
+      startTime,
+      endTime,
+      shiftType,
+      resolvedTimelineStartMinutes,
+      resolvedTimelineEndMinutes,
+      timelineMetrics.hourHeight,
+      timelineMetrics.edgePadding,
+    )
+
+    if (!entryLayout) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    setPointerPosition({
+      x: event.clientX,
+      y: event.clientY,
+    })
+    dragPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    }
+    setInteraction({
+      mode: 'resize',
       entryId: entry.id,
       customerId: entry.customer_id,
       dayOfWeek: getScheduleEntryDay(entry),
-      startTime: getScheduleEntryStartTime(entry),
-      endTime: getScheduleEntryEndTime(entry),
+      startMinutes: entryLayout.startMinutes,
       originalDayOfWeek: getScheduleEntryDay(entry),
-      originalStartTime: getScheduleEntryStartTime(entry),
-      originalEndTime: getScheduleEntryEndTime(entry),
+      originalStartTime: startTime,
+      originalEndTime: endTime,
+      originX: event.clientX,
+      originY: event.clientY,
+      dragActivated: true,
+    })
+    setPreviewPlacement({
+      mode: 'resize',
+      entryId: entry.id,
+      customerId: entry.customer_id,
+      dayOfWeek: getScheduleEntryDay(entry),
+      startMinutes: entryLayout.startMinutes,
+      endMinutes: entryLayout.endMinutes,
+      startTime,
+      endTime,
+      isValid: true,
     })
   }
 
-  const handleEditorFieldChange = (field, value) => {
-    setEditorDraft((currentDraft) =>
-      currentDraft
-        ? {
-            ...currentDraft,
-            [field]: value,
-          }
-        : currentDraft,
-    )
-  }
-
-  const handleEditorCancel = () => {
-    setEditorDraft(null)
-  }
-
-  const handleEditorSubmit = async (event) => {
-    event.preventDefault()
-
-    if (!editorDraft) {
-      return
-    }
-
-    const validation = getEditorValidation(editorDraft)
-    if (!validation.isValid) {
-      return
-    }
-
-    if (
-      editorDraft.mode !== 'create' &&
-      editorDraft.originalDayOfWeek === editorDraft.dayOfWeek &&
-      editorDraft.originalStartTime === editorDraft.startTime &&
-      editorDraft.originalEndTime === editorDraft.endTime
-    ) {
-      setEditorDraft(null)
-      return
-    }
-
-    let wasSaved = false
-
-    if (editorDraft.mode === 'create') {
-      wasSaved = await onCreateScheduleEntry({
-        customerId: editorDraft.customerId,
-        dayOfWeek: editorDraft.dayOfWeek,
-        startTime: editorDraft.startTime,
-        endTime: editorDraft.endTime,
-      })
-    } else {
-      wasSaved = await onMoveScheduleEntry({
-        entryId: editorDraft.entryId,
-        dayOfWeek: editorDraft.dayOfWeek,
-        startTime: editorDraft.startTime,
-        endTime: editorDraft.endTime,
-      })
-    }
-
-    if (wasSaved) {
-      setEditorDraft(null)
-    }
-  }
-
   const handleDeleteScheduleEntry = (entryId) => {
-    if (editorDraft?.entryId === entryId) {
-      setEditorDraft(null)
-    }
-
     void onDeleteScheduleEntry(entryId)
   }
 
+  const livePreviewTimeRangeLabel = previewPlacement
+    ? getScheduleTimeRangeLabel(previewPlacement.startTime, previewPlacement.endTime)
+    : ''
+  const livePreviewDurationLabel = previewPlacement
+    ? formatDurationLabel(previewPlacement.startTime, previewPlacement.endTime)
+    : ''
+  const livePreviewMetaLabel = previewPlacement
+    ? [previewPlacement.dayOfWeek, livePreviewTimeRangeLabel].filter(Boolean).join(' · ')
+    : ''
+  const livePreviewHintLabel = previewPlacement
+    ? previewPlacement.isValid
+      ? [livePreviewDurationLabel, getPreviewActionLabel(previewPlacement.mode)].filter(Boolean).join(' · ')
+      : 'Zeitfenster bereits belegt'
+    : interaction
+      ? getDragGhostLabel(interaction.mode, false)
+      : ''
+
   return (
-    <section className="planning-workspace-layout">
+    <section className="planning-workspace-layout" data-planner-layout={plannerId}>
       <section
-        id="dienstplan-widget"
-        className="panel dashboard-widget schedule-widget"
-        aria-label="Dienstplan"
+        id={plannerId}
+        className={`panel dashboard-widget schedule-widget${
+          shiftType === 'night' ? ' schedule-widget-night' : ''
+        }`}
+        aria-label={plannerTitle}
       >
         <div className="widget-topline">
           <div>
-            <h2>Dienstplan</h2>
+            <h2>{plannerTitle}</h2>
             <p className="widget-note">
               {scheduleDateRangeLabel || 'Bitte eine gültige Kalenderwoche wählen.'}
             </p>
           </div>
           <div className="widget-topline-actions">
+            {plannerViewSwitcher}
             <button
               type="button"
               className="secondary-button"
@@ -646,7 +986,7 @@ function PlanningWorkspace({
               type="button"
               className="secondary-button widget-print-button"
               onClick={() =>
-                printSection('dienstplan-widget', {
+                printSection(plannerId, {
                   pageStyle: '@page { size: A4 landscape; margin: 6mm; }',
                 })
               }
@@ -664,14 +1004,18 @@ function PlanningWorkspace({
             <span>Mitarbeiter</span>
             <strong>{selectedEmployeeLabel}</strong>
           </div>
+          <div className="schedule-meta-chip">
+            <span>Zeitraum</span>
+            <strong>{plannerRangeLabel}</strong>
+          </div>
           <div className="schedule-meta-chip schedule-meta-chip-week">
             <span>Woche</span>
             <strong>{dashboardWeekLabel}</strong>
             <div className="schedule-week-controls">
-              <label className="schedule-week-field" htmlFor="calendar-week">
+              <label className="schedule-week-field" htmlFor={`calendar-week-${plannerId}`}>
                 <span>KW</span>
                 <input
-                  id="calendar-week"
+                  id={`calendar-week-${plannerId}`}
                   type="number"
                   min="1"
                   max="53"
@@ -680,10 +1024,10 @@ function PlanningWorkspace({
                   onChange={(event) => onCalendarWeekChange(Number(event.target.value) || 0)}
                 />
               </label>
-              <label className="schedule-week-field" htmlFor="year">
+              <label className="schedule-week-field" htmlFor={`year-${plannerId}`}>
                 <span>Jahr</span>
                 <input
-                  id="year"
+                  id={`year-${plannerId}`}
                   type="number"
                   min="2020"
                   inputMode="numeric"
@@ -695,211 +1039,265 @@ function PlanningWorkspace({
           </div>
         </div>
 
-        <div className={`planner-board${interaction?.dragActivated ? ' planner-board-interacting' : ''}`}>
+        <div
+          className={`planner-board${interaction?.dragActivated ? ' planner-board-interacting' : ''}`}
+          style={boardShellStyle}
+        >
           <div className="planner-scroll-area" ref={scrollAreaRef}>
-            <div className="planner-grid-layout" ref={boardRef}>
-              {weekdays.map((day) => {
-                const dayEntries = entriesByDay[day] ?? []
+            <div className="planner-grid-shell" style={boardShellStyle}>
+              <div className="planner-grid-header">
+                <div className="planner-corner-cell">
+                  <span>Uhrzeit</span>
+                </div>
 
-                return (
-                  <div
-                    key={`${day}-header`}
-                    className={`planner-day-header-cell${
-                      previewPlacement?.dayOfWeek === day ? ' planner-day-header-cell-preview' : ''
-                    }`}
-                  >
-                    <span>{day}</span>
-                    <strong>{String(dayEntries.length).padStart(2, '0')}</strong>
-                  </div>
-                )
-              })}
+                <div className="planner-day-header-track" style={dayTrackStyle}>
+                  {weekdays.map((day) => (
+                    <div
+                      key={`${day}-header`}
+                      className={`planner-day-header-cell${
+                        previewPlacement?.dayOfWeek === day ? ' planner-day-header-cell-preview' : ''
+                      }`}
+                    >
+                      <span>{day}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-              {weekdays.map((day) => {
-                const dayEntries = entriesByDay[day] ?? []
-                const dayEditor = editorDraft?.dayOfWeek === day ? editorDraft : null
-                const isPreviewDay = previewPlacement?.dayOfWeek === day
+              <div className="planner-grid-body">
+                <div className="planner-time-axis" aria-hidden="true">
+                  {timelineHourMarkers.slice(0, -1).map((minutes) => (
+                    <div
+                      key={`timeline-hour-${minutes}`}
+                      className="planner-time-axis-label"
+                      style={{
+                        top: `${
+                          getPixelsFromMinutes(
+                            minutes,
+                            resolvedTimelineStartMinutes,
+                            timelineMetrics.hourHeight,
+                            timelineMetrics.edgePadding,
+                          ) +
+                          getPixelsFromDuration(60, timelineMetrics.hourHeight) / 2
+                        }px`,
+                      }}
+                    >
+                      <span>{getTimeValueFromMinutes(minutes)}</span>
+                    </div>
+                  ))}
+                </div>
 
-                return (
-                  <section
-                    key={day}
-                    className={`planner-day-column${isPreviewDay ? ' planner-day-column-preview' : ''}`}
-                    aria-label={day}
-                  >
-                    {isPreviewDay ? (
-                      <div
-                        className="planner-day-drop-hint"
-                        style={{
-                          backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
-                          color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
-                        }}
-                      >
-                        <strong>{activePreviewCustomer?.name ?? 'Auftrag'}</strong>
-                        <span>Hier ablegen und Zeit von/bis eintragen.</span>
-                      </div>
-                    ) : null}
-
-                    {dayEditor ? (
-                      <form className="planner-time-editor" onSubmit={handleEditorSubmit}>
-                        <div className="planner-time-editor-topline">
-                          <div>
-                            <span className="planner-time-editor-kicker">{dayEditor.dayOfWeek}</span>
-                            <strong className="planner-time-editor-title">
-                              {activeEditorCustomer?.name ?? 'Einsatz'}
-                            </strong>
-                          </div>
-                          <span className="planner-entry-chip">
-                            {dayEditor.mode === 'create'
-                              ? 'Neu'
-                              : dayEditor.mode === 'move'
-                                ? 'Verschieben'
-                                : 'Bearbeiten'}
-                          </span>
-                        </div>
-
-                        {activeEditorCustomer?.address ? (
-                          <span className="planner-time-editor-day">
-                            {activeEditorCustomer.address}
-                          </span>
-                        ) : null}
-
-                        <div className="planner-time-editor-fields">
-                          <label className="planner-time-editor-field">
-                            <span>Von</span>
-                            <input
-                              type="time"
-                              step="60"
-                              value={dayEditor.startTime}
-                              onChange={(event) =>
-                                handleEditorFieldChange('startTime', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label className="planner-time-editor-field">
-                            <span>Bis</span>
-                            <input
-                              type="time"
-                              step="60"
-                              value={dayEditor.endTime}
-                              onChange={(event) =>
-                                handleEditorFieldChange('endTime', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        {editorValidation?.message ? (
-                          <p
-                            className={`planner-time-editor-note${
-                              editorValidation.tone === 'invalid'
-                                ? ' planner-time-editor-note-invalid'
-                                : ''
-                            }${
-                              editorValidation.tone === 'valid'
-                                ? ' planner-time-editor-note-valid'
-                                : ''
-                            }`}
-                          >
-                            {editorValidation.message}
-                          </p>
-                        ) : null}
-
-                        <div className="planner-time-editor-actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={handleEditorCancel}
-                          >
-                            Abbrechen
-                          </button>
-                          <button
-                            type="submit"
-                            className="action-button"
-                            disabled={!editorValidation?.isValid || isSavingSchedule}
-                          >
-                            {isSavingSchedule ? 'Speichert...' : 'Speichern'}
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-
-                    {dayEntries.length > 0 ? (
-                      dayEntries.map((entry) => {
-                        const customer = customersById[entry.customer_id]
-                        const startTime = getScheduleEntryStartTime(entry)
-                        const endTime = getScheduleEntryEndTime(entry)
-                        const durationLabel = formatDurationLabel(startTime, endTime)
-                        const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
-                        const isMovingEntry =
-                          interaction?.mode === 'move' && interaction.entryId === entry.id
-                        const isEditingEntry = editorDraft?.entryId === entry.id
-
-                        return (
-                          <article
-                            key={entry.id}
-                            className={`planner-entry-card${
-                              isMovingEntry || isEditingEntry ? ' planner-entry-card-moving' : ''
-                            }`}
-                            style={{
-                              backgroundColor: customer?.color ?? '#334155',
-                              color: getReadableTextColor(customer?.color ?? '#334155'),
-                            }}
-                            title={`${customer?.name ?? `Kunde #${entry.customer_id}`} · ${timeRangeLabel}${
-                              customer?.address ? ` · ${customer.address}` : ''
-                            }`}
-                            onPointerDown={(event) => handleEntryPointerDown(entry, event)}
-                          >
-                            <div className="planner-entry-topline">
-                              {durationLabel ? (
-                                <span className="planner-entry-chip">{durationLabel}</span>
-                              ) : null}
-                              <span className="planner-entry-time">{timeRangeLabel}</span>
-                            </div>
-                            <strong className="planner-entry-name">
-                              {customer?.name ?? `Kunde #${entry.customer_id}`}
-                            </strong>
-                            {customer?.address ? (
-                              <span className="planner-entry-address">{customer.address}</span>
-                            ) : null}
-                            <div className="planner-entry-actions">
-                              <button
-                                type="button"
-                                className="planner-entry-edit"
-                                aria-label="Zeit bearbeiten"
-                                disabled={isSavingSchedule}
-                                onClick={() => openEditorForEntry(entry)}
-                              >
-                                Zeit
-                              </button>
-                              <button
-                                type="button"
-                                className="planner-entry-delete"
-                                aria-label="Einsatz entfernen"
-                                disabled={isSavingSchedule}
-                                onClick={() => handleDeleteScheduleEntry(entry.id)}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </article>
+                <div className="planner-day-columns" ref={boardRef} style={dayTrackStyle}>
+                  {weekdays.map((day) => {
+                    const dayEntries = entriesByDay[day] ?? []
+                    const dayPreview = previewPlacement?.dayOfWeek === day ? previewPlacement : null
+                    const dayPreviewTop = dayPreview
+                      ? getPixelsFromMinutes(
+                          dayPreview.startMinutes,
+                          resolvedTimelineStartMinutes,
+                          timelineMetrics.hourHeight,
+                          timelineMetrics.edgePadding,
                         )
-                      })
-                    ) : !dayEditor && !isPreviewDay ? (
-                      <p className="planner-day-empty">Auftrag hier ablegen.</p>
-                    ) : null}
-                  </section>
-                )
-              })}
+                      : 0
+                    const dayPreviewEndTop = dayPreview
+                      ? getPixelsFromMinutes(
+                          Math.min(dayPreview.endMinutes, resolvedTimelineEndMinutes),
+                          resolvedTimelineStartMinutes,
+                          timelineMetrics.hourHeight,
+                          timelineMetrics.edgePadding,
+                        )
+                      : 0
+                    const dayPreviewHeight = dayPreview
+                      ? getPixelsFromDuration(
+                        Math.max(
+                            Math.min(dayPreview.endMinutes, resolvedTimelineEndMinutes) -
+                              dayPreview.startMinutes,
+                            0,
+                          ),
+                          timelineMetrics.hourHeight,
+                        )
+                      : 0
+
+                    return (
+                      <section
+                        key={day}
+                        className={`planner-day-column${
+                          dayPreview ? ' planner-day-column-preview' : ''
+                        }`}
+                        aria-label={day}
+                      >
+                        <div className="planner-day-column-surface">
+                          {dayEntries.map((entry) => {
+                            const customer = customersById[entry.customer_id]
+                            const startTime = getScheduleEntryStartTime(entry)
+                            const endTime = getScheduleEntryEndTime(entry)
+                            const entryLayout = getEntryLayout(
+                              startTime,
+                              endTime,
+                              shiftType,
+                              resolvedTimelineStartMinutes,
+                              resolvedTimelineEndMinutes,
+                              timelineMetrics.hourHeight,
+                              timelineMetrics.edgePadding,
+                            )
+
+                            if (!entryLayout || entryLayout.height <= 0) {
+                              return null
+                            }
+
+                            const durationLabel = formatDurationLabel(startTime, endTime)
+                            const timeRangeLabel = getScheduleTimeRangeLabel(startTime, endTime)
+                            const isMovingEntry =
+                              interaction?.mode === 'move' && interaction.entryId === entry.id
+                            const isResizingEntry =
+                              interaction?.mode === 'resize' && interaction.entryId === entry.id
+                            const isCompactEntry = entryLayout.visibleDurationMinutes <= 45
+                            const isShortEntry = entryLayout.visibleDurationMinutes <= 60
+
+                            return (
+                              <article
+                                key={entry.id}
+                                className={`planner-entry-card${
+                                  isMovingEntry || isResizingEntry ? ' planner-entry-card-moving' : ''
+                                }${isCompactEntry ? ' planner-entry-card-compact' : ''}${
+                                  isShortEntry ? ' planner-entry-card-short' : ''
+                                }`}
+                                style={{
+                                  top: `${entryLayout.top}px`,
+                                  height: `${entryLayout.height}px`,
+                                  backgroundColor: customer?.color ?? '#334155',
+                                  color: getReadableTextColor(customer?.color ?? '#334155'),
+                                }}
+                                title={`${customer?.name ?? `Kunde #${entry.customer_id}`} · ${timeRangeLabel}${
+                                  customer?.address ? ` · ${customer.address}` : ''
+                                }`}
+                                onPointerDown={(event) => handleEntryPointerDown(entry, event)}
+                              >
+                                <div className="planner-entry-topline">
+                                  {durationLabel ? (
+                                    <span className="planner-entry-chip">{durationLabel}</span>
+                                  ) : (
+                                    <span className="planner-entry-chip">Einsatz</span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="planner-entry-delete"
+                                    aria-label="Einsatz entfernen"
+                                    disabled={isSavingSchedule}
+                                    onClick={() => handleDeleteScheduleEntry(entry.id)}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+
+                                <strong className="planner-entry-name">
+                                  {customer?.name ?? `Kunde #${entry.customer_id}`}
+                                </strong>
+                                <span className="planner-entry-time">{timeRangeLabel}</span>
+                                {!isCompactEntry && customer?.address ? (
+                                  <span className="planner-entry-address">{customer.address}</span>
+                                ) : null}
+                                {entryLayout.isTruncated ? (
+                                  <span className="planner-entry-overflow-note">
+                                    außerhalb {plannerRangeLabel}
+                                  </span>
+                                ) : null}
+
+                                <button
+                                  type="button"
+                                  className="planner-entry-resize-handle"
+                                  aria-label="Einsatzdauer ziehen"
+                                  onPointerDown={(event) => handleResizePointerDown(entry, event)}
+                                >
+                                  <span />
+                                </button>
+                              </article>
+                            )
+                          })}
+
+                          {dayPreview ? (
+                            <>
+                              <div
+                                className={`planner-preview-guide${
+                                  dayPreview.isValid ? '' : ' planner-preview-guide-invalid'
+                                }`}
+                                style={{
+                                  top: `${dayPreviewTop}px`,
+                                }}
+                              />
+                              <div
+                                className={`planner-preview-guide${
+                                  dayPreview.isValid ? '' : ' planner-preview-guide-invalid'
+                                }`}
+                                style={{
+                                  top: `${dayPreviewEndTop}px`,
+                                }}
+                              />
+                              <article
+                                className={`planner-entry-preview${
+                                  dayPreview.isValid ? '' : ' planner-entry-preview-invalid'
+                                }`}
+                                style={{
+                                  top: `${dayPreviewTop}px`,
+                                  height: `${dayPreviewHeight}px`,
+                                  backgroundColor: activePreviewCustomer?.color ?? '#2563eb',
+                                  color: getReadableTextColor(activePreviewCustomer?.color ?? '#2563eb'),
+                                }}
+                              >
+                                <div className="planner-entry-topline">
+                                  <span className="planner-entry-chip">
+                                    {getPreviewStatusLabel(dayPreview.mode)}
+                                  </span>
+                                  <span className="planner-entry-time">
+                                    {getScheduleTimeRangeLabel(dayPreview.startTime, dayPreview.endTime)}
+                                  </span>
+                                </div>
+                                <strong className="planner-entry-name">
+                                  {activePreviewCustomer?.name ?? 'Einsatz'}
+                                </strong>
+                                {activePreviewCustomer?.address ? (
+                                  <span className="planner-entry-address">
+                                    {activePreviewCustomer.address}
+                                  </span>
+                                ) : null}
+                                <span className="planner-entry-preview-note">
+                                  {dayPreview.isValid
+                                    ? `${formatDurationLabel(dayPreview.startTime, dayPreview.endTime)} geplant`
+                                    : 'Zeitfenster bereits belegt'}
+                                </span>
+                              </article>
+                            </>
+                          ) : null}
+
+                        </div>
+                      </section>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 
           {selectedEmployeeId === null ? (
             <div className="planner-overlay-message">
               <strong>Mitarbeiter auswählen</strong>
-              <span>Danach lassen sich Kunden direkt auf einen Wochentag ziehen.</span>
+              <span>Danach Kunden in die Zeitleiste ziehen und die Dauer nach unten aufziehen.</span>
             </div>
           ) : null}
 
           {interaction?.dragActivated ? (
+            <div
+              className={`planner-live-panel${
+                previewPlacement?.isValid === false ? ' planner-live-panel-invalid' : ''
+              }`}
+            >
+              <strong>{activePreviewCustomer?.name ?? 'Einsatz'}</strong>
+              <span>{livePreviewMetaLabel || 'Über den Wochenplan ziehen'}</span>
+              <span>{livePreviewHintLabel}</span>
+            </div>
+          ) : null}
+
+          {interaction?.dragActivated && !previewPlacement ? (
             <div
               className="planner-drag-ghost"
               style={{
@@ -909,18 +1307,14 @@ function PlanningWorkspace({
               }}
             >
               <strong>{activePreviewCustomer?.name ?? 'Einsatz'}</strong>
-              <span>
-                {interaction.mode === 'move'
-                  ? 'Auftrag auf Wochentag verschieben'
-                  : 'Kunde auf Wochentag einplanen'}
-              </span>
+              <span>{getDragGhostLabel(interaction.mode, Boolean(previewPlacement))}</span>
             </div>
           ) : null}
         </div>
 
         <div className="planner-print-sheet" aria-hidden="true">
           <header className="planner-print-header">
-            <strong className="planner-print-title">Dienstplan</strong>
+            <strong className="planner-print-title">{plannerTitle}</strong>
             <div className="planner-print-meta">
               <span>
                 <strong>Mitarbeiter</strong> {selectedEmployeeLabel}
@@ -1025,7 +1419,7 @@ function PlanningWorkspace({
         {sidebarContent}
 
         <section
-          id="kunden-widget"
+          id={`${plannerId}-kunden-widget`}
           className="panel dashboard-widget customer-widget"
           aria-label="Kunden"
         >
@@ -1113,7 +1507,7 @@ function PlanningWorkspace({
                     >
                       ×
                     </button>
-                    <span className="customer-card-action">Einplanen</span>
+                    <span className="customer-card-action">In Plan ziehen</span>
                   </div>
                 </article>
               ))

@@ -38,6 +38,22 @@ export function getNormalizedTimeRange(startTime, endTime) {
   }
 }
 
+export function isWholeHourTimeValue(timeValue) {
+  const minutes = getTimeValueInMinutes(timeValue)
+
+  return minutes !== null && minutes % 60 === 0
+}
+
+export function isWholeHourTimeRange(startTime, endTime) {
+  const normalizedTimeRange = getNormalizedTimeRange(startTime, endTime)
+
+  if (!normalizedTimeRange) {
+    return false
+  }
+
+  return isWholeHourTimeValue(startTime) && isWholeHourTimeValue(endTime)
+}
+
 export function getDurationHoursBetweenTimes(startTime, endTime) {
   const normalizedTimeRange = getNormalizedTimeRange(startTime, endTime)
 

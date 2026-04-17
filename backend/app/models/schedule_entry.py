@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Text, Time, func
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, Time, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -8,6 +8,7 @@ class ScheduleEntry(Base):
     __tablename__ = "schedule_entries"
     __table_args__ = (
         CheckConstraint("start_time <> end_time", name="ck_schedule_entries_times_distinct"),
+        CheckConstraint("shift_type IN ('day', 'night')", name="ck_schedule_entries_shift_type"),
         Index(
             "ix_schedule_entries_account_id_date_start_time_id",
             "account_id",
@@ -24,6 +25,11 @@ class ScheduleEntry(Base):
             "ix_schedule_entries_account_id_customer_id",
             "account_id",
             "customer_id",
+        ),
+        Index(
+            "ix_schedule_entries_account_id_shift_type",
+            "account_id",
+            "shift_type",
         ),
         ForeignKeyConstraint(
             ["account_id", "employee_id"],
@@ -50,6 +56,7 @@ class ScheduleEntry(Base):
     employee_id = Column(Integer, nullable=False)
     customer_id = Column(Integer, nullable=False)
     date = Column(Date, nullable=False)
+    shift_type = Column(String(16), nullable=False, default="day", server_default="day")
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     notes = Column(Text, nullable=True)

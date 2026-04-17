@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from app.schemas.schedule import (
 from app.security import get_auth_context, get_current_account, get_current_user
 
 router = APIRouter(dependencies=[Depends(get_auth_context)])
+NIGHT_SHIFT_START_TIME = time(hour=19)
 
 
 def get_schedule_entry_or_404(
@@ -65,6 +66,13 @@ def validate_schedule_times(start_time, end_time) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="start_time and end_time must be different",
         )
+
+
+def get_schedule_entry_anchor_date(entry_date: date, start_time: time, shift_type: str) -> date:
+    if shift_type == "night" and start_time < NIGHT_SHIFT_START_TIME:
+        return entry_date - timedelta(days=1)
+
+    return entry_date
 
 
 def get_iso_week_bounds(year: int, calendar_week: int):
@@ -183,8 +191,9 @@ def copy_previous_week_schedule_entries(
         .where(
             ScheduleEntry.account_id == current_account.id,
             ScheduleEntry.employee_id == payload.employee_id,
+            ScheduleEntry.shift_type == payload.shift_type,
             ScheduleEntry.date >= source_week_start,
-            ScheduleEntry.date <= source_week_end,
+            ScheduleEntry.date <= source_week_end + timedelta(days=1),
         )
         .order_by(
             ScheduleEntry.date.asc(),
@@ -192,6 +201,14 @@ def copy_previous_week_schedule_entries(
             ScheduleEntry.id.asc(),
         )
     ).all()
+
+    source_entries = [
+        entry
+        for entry in source_entries
+        if source_week_start
+        <= get_schedule_entry_anchor_date(entry.date, entry.start_time, entry.shift_type)
+        <= source_week_end
+    ]
 
     if not source_entries:
         raise HTTPException(
@@ -203,10 +220,19 @@ def copy_previous_week_schedule_entries(
         select(ScheduleEntry).where(
             ScheduleEntry.account_id == current_account.id,
             ScheduleEntry.employee_id == payload.employee_id,
+            ScheduleEntry.shift_type == payload.shift_type,
             ScheduleEntry.date >= target_week_start,
-            ScheduleEntry.date <= target_week_end,
+            ScheduleEntry.date <= target_week_end + timedelta(days=1),
         )
     ).all()
+
+    existing_target_entries = [
+        entry
+        for entry in existing_target_entries
+        if target_week_start
+        <= get_schedule_entry_anchor_date(entry.date, entry.start_time, entry.shift_type)
+        <= target_week_end
+    ]
 
     if existing_target_entries and not payload.replace_existing:
         raise HTTPException(
@@ -219,11 +245,14 @@ def copy_previous_week_schedule_entries(
 
     copied_entries = []
     for entry in source_entries:
+        anchor_date = get_schedule_entry_anchor_date(entry.date, entry.start_time, entry.shift_type)
+        actual_date_offset = entry.date - anchor_date
         copied_entry = ScheduleEntry(
             account_id=current_account.id,
             employee_id=entry.employee_id,
             customer_id=entry.customer_id,
-            date=entry.date + timedelta(days=7),
+            date=anchor_date + timedelta(days=7) + actual_date_offset,
+            shift_type=entry.shift_type,
             start_time=entry.start_time,
             end_time=entry.end_time,
             notes=entry.notes,

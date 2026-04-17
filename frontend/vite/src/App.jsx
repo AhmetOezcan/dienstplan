@@ -5,8 +5,23 @@ import WeeklyOverviewWidget from './components/WeeklyOverviewWidget'
 import {
   getDurationHoursBetweenTimes,
   getNormalizedTimeRange,
-  getScheduleIntervalBounds,
+  isWholeHourTimeRange,
 } from './utils/scheduleTime'
+import {
+  DAY_SHIFT_END_MINUTES,
+  DAY_SHIFT_START_MINUTES,
+  NIGHT_SHIFT_END_MINUTES,
+  NIGHT_SHIFT_START_MINUTES,
+  SCHEDULE_SHIFT_TYPES,
+  getPlannerDayOfWeekForEntry,
+  getScheduleEntryEndTime as getScheduleEntryEndTimeValue,
+  getScheduleEntryShiftType as getScheduleEntryShiftTypeValue,
+  getScheduleEntryStartTime as getScheduleEntryStartTimeValue,
+  getScheduleIntervalBoundsFromDate,
+  getShiftActualIsoDate,
+  getShiftAnchorIsoDate,
+  normalizeScheduleShiftType,
+} from './utils/scheduleShift'
 
 const weekdays = [
   'Montag',
@@ -324,6 +339,22 @@ const LEGAL_DROPDOWN_ITEMS = [
   { section: 'legal-privacy', label: 'Datenschutz' },
   { section: 'legal-cookies', label: 'Cookies' },
 ]
+const SCHEDULE_PLANNER_CONFIGS = [
+  {
+    plannerId: 'dienstplan-widget',
+    plannerTitle: 'Dienstplan',
+    shiftType: SCHEDULE_SHIFT_TYPES.DAY,
+    timelineStartMinutes: DAY_SHIFT_START_MINUTES,
+    timelineEndMinutes: DAY_SHIFT_END_MINUTES,
+  },
+  {
+    plannerId: 'nachtdienst-widget',
+    plannerTitle: 'Nachtdienst',
+    shiftType: SCHEDULE_SHIFT_TYPES.NIGHT,
+    timelineStartMinutes: NIGHT_SHIFT_START_MINUTES,
+    timelineEndMinutes: NIGHT_SHIFT_END_MINUTES,
+  },
+]
 
 function isLegalDashboardSection(section) {
   return LEGAL_DROPDOWN_ITEMS.some((item) => item.section === section)
@@ -373,6 +404,20 @@ function isIsoDateInCalendarWeek(dateValue, year, calendarWeek) {
   weekEnd.setUTCDate(weekStart.getUTCDate() + 6)
 
   return dateValue >= formatIsoDate(weekStart) && dateValue <= formatIsoDate(weekEnd)
+}
+
+function isScheduleEntryInCalendarWeek(entry, year, calendarWeek) {
+  return isIsoDateInCalendarWeek(getScheduleEntryAnchorDate(entry), year, calendarWeek)
+}
+
+function getScheduleDateForPlannerPlacement(year, calendarWeek, dayOfWeek, startTime, shiftType) {
+  const anchorDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
+
+  if (!anchorDate) {
+    return ''
+  }
+
+  return getShiftActualIsoDate(anchorDate, startTime, shiftType)
 }
 
 function getCalendarWeekDateRangeLabel(year, calendarWeek) {
@@ -438,24 +483,28 @@ function getEmployeeDisplayName(employee) {
   return [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim()
 }
 
-function getScheduleEntryDay(entry) {
-  return entry.day_of_week ?? entry.day ?? ''
-}
-
 function getScheduleEntryDate(entry) {
   return entry.date ?? ''
 }
 
-function getScheduleEntryStartTime(entry) {
-  if (entry.time) {
-    return entry.time
-  }
+function getScheduleEntryShiftType(entry) {
+  return getScheduleEntryShiftTypeValue(entry)
+}
 
-  return entry.start_time?.slice(0, 5) ?? ''
+function getScheduleEntryStartTime(entry) {
+  return getScheduleEntryStartTimeValue(entry)
 }
 
 function getScheduleEntryEndTime(entry) {
-  return entry.end_time?.slice(0, 5) ?? ''
+  return getScheduleEntryEndTimeValue(entry)
+}
+
+function getScheduleEntryAnchorDate(entry) {
+  return getShiftAnchorIsoDate(
+    getScheduleEntryDate(entry),
+    getScheduleEntryStartTime(entry),
+    getScheduleEntryShiftType(entry),
+  )
 }
 
 function sortEmployees(items) {
@@ -1123,6 +1172,9 @@ function App() {
   const [customerForm, setCustomerForm] = useState(createInitialCustomerForm)
   const [year, setYear] = useState(INITIAL_CALENDAR_STATE.year)
   const [calendarWeek, setCalendarWeek] = useState(INITIAL_CALENDAR_STATE.calendarWeek)
+  const [selectedSchedulePlannerShiftType, setSelectedSchedulePlannerShiftType] = useState(
+    SCHEDULE_SHIFT_TYPES.DAY,
+  )
   const [isLoading, setIsLoading] = useState(Boolean(initialAuthSession.accessToken))
   const [loadError, setLoadError] = useState('')
   const [authError, setAuthError] = useState('')
@@ -1326,13 +1378,54 @@ function App() {
     (customer) => !customerWidgetIdSet.has(customer.id),
   )
   const scheduleEntriesForSelectedWeek = scheduleEntries.filter((entry) =>
-    isIsoDateInCalendarWeek(getScheduleEntryDate(entry), year, calendarWeek),
+    isScheduleEntryInCalendarWeek(entry, year, calendarWeek),
   )
   const scheduleEntriesForCurrentView =
     selectedEmployeeId === null
       ? []
       : scheduleEntriesForSelectedWeek.filter((entry) => entry.employee_id === selectedEmployeeId)
+  const scheduleEntriesForCurrentViewByShiftType = {
+    [SCHEDULE_SHIFT_TYPES.DAY]: scheduleEntriesForCurrentView
+      .filter((entry) => getScheduleEntryShiftType(entry) === SCHEDULE_SHIFT_TYPES.DAY)
+      .map((entry) => ({
+        ...entry,
+        planner_day_of_week: getPlannerDayOfWeekForEntry(entry, weekdays),
+      })),
+    [SCHEDULE_SHIFT_TYPES.NIGHT]: scheduleEntriesForCurrentView
+      .filter((entry) => getScheduleEntryShiftType(entry) === SCHEDULE_SHIFT_TYPES.NIGHT)
+      .map((entry) => ({
+        ...entry,
+        planner_day_of_week: getPlannerDayOfWeekForEntry(entry, weekdays),
+      })),
+  }
   const dashboardWeekLabel = `KW ${calendarWeek}/${year}`
+  const activePlannerConfig =
+    SCHEDULE_PLANNER_CONFIGS.find(
+      (plannerConfig) => plannerConfig.shiftType === selectedSchedulePlannerShiftType,
+    ) ?? SCHEDULE_PLANNER_CONFIGS[0]
+  const schedulePlannerViewSwitcher = (
+    <div className="schedule-shift-toggle" aria-label="Dienstplanansicht">
+      {SCHEDULE_PLANNER_CONFIGS.map((plannerConfig) => {
+        const isActivePlanner = plannerConfig.shiftType === activePlannerConfig.shiftType
+        const toggleLabel =
+          plannerConfig.shiftType === SCHEDULE_SHIFT_TYPES.DAY ? '☀ Tag' : '☾ Nacht'
+
+        return (
+          <button
+            key={`planner-toggle-${plannerConfig.shiftType}`}
+            type="button"
+            className={`schedule-shift-toggle-button${
+              isActivePlanner ? ' schedule-shift-toggle-button-active' : ''
+            }`}
+            aria-pressed={isActivePlanner}
+            onClick={() => setSelectedSchedulePlannerShiftType(plannerConfig.shiftType)}
+          >
+            {toggleLabel}
+          </button>
+        )
+      })}
+    </div>
+  )
 
   const resetAuthenticatedApp = (message = '') => {
     clearStoredAuthSession()
@@ -1679,12 +1772,25 @@ function App() {
     )
   }
 
-  const hasScheduleConflict = ({ dayOfWeek, startTime, endTime, ignoreEntryId = null }) => {
-    const candidateInterval = getScheduleIntervalBounds(
+  const hasScheduleConflict = ({
+    dayOfWeek,
+    startTime,
+    endTime,
+    ignoreEntryId = null,
+    shiftType = SCHEDULE_SHIFT_TYPES.DAY,
+  }) => {
+    const normalizedShiftType = normalizeScheduleShiftType(shiftType)
+    const scheduleDate = getScheduleDateForPlannerPlacement(
+      year,
+      calendarWeek,
       dayOfWeek,
       startTime,
+      normalizedShiftType,
+    )
+    const candidateInterval = getScheduleIntervalBoundsFromDate(
+      scheduleDate,
+      startTime,
       endTime,
-      weekdayNumberByName,
     )
 
     if (!candidateInterval) {
@@ -1692,15 +1798,17 @@ function App() {
     }
 
     return scheduleEntriesForCurrentView.some((entry) => {
-      if (entry.id === ignoreEntryId) {
+      if (
+        entry.id === ignoreEntryId ||
+        getScheduleEntryShiftType(entry) !== normalizedShiftType
+      ) {
         return false
       }
 
-      const entryInterval = getScheduleIntervalBounds(
-        getScheduleEntryDay(entry),
+      const entryInterval = getScheduleIntervalBoundsFromDate(
+        getScheduleEntryDate(entry),
         getScheduleEntryStartTime(entry),
         getScheduleEntryEndTime(entry),
-        weekdayNumberByName,
       )
 
       if (!entryInterval) {
@@ -1711,7 +1819,13 @@ function App() {
     })
   }
 
-  const createScheduleEntry = async ({ customerId, dayOfWeek, startTime, endTime }) => {
+  const createScheduleEntry = async ({
+    customerId,
+    dayOfWeek,
+    startTime,
+    endTime,
+    shiftType = SCHEDULE_SHIFT_TYPES.DAY,
+  }) => {
     if (isSavingSchedule) {
       return false
     }
@@ -1733,7 +1847,14 @@ function App() {
       return false
     }
 
-    if (hasScheduleConflict({ dayOfWeek, startTime, endTime })) {
+    if (!isWholeHourTimeRange(startTime, endTime)) {
+      setLoadError('Es sind nur volle Stunden erlaubt.')
+      return false
+    }
+
+    const normalizedShiftType = normalizeScheduleShiftType(shiftType)
+
+    if (hasScheduleConflict({ dayOfWeek, startTime, endTime, shiftType: normalizedShiftType })) {
       setLoadError('Dieses Zeitfenster ist bereits belegt.')
       return false
     }
@@ -1741,7 +1862,13 @@ function App() {
     setIsSavingSchedule(true)
 
     try {
-      const scheduleDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
+      const scheduleDate = getScheduleDateForPlannerPlacement(
+        year,
+        calendarWeek,
+        dayOfWeek,
+        startTime,
+        normalizedShiftType,
+      )
       if (!scheduleDate) {
         throw new Error('Für die ausgewählte Kalenderwoche konnte kein gültiges Datum ermittelt werden.')
       }
@@ -1753,6 +1880,7 @@ function App() {
           employee_id: selectedEmployeeId,
           customer_id: customerId,
           date: scheduleDate,
+          shift_type: normalizedShiftType,
           start_time: startTime,
           end_time: endTime,
           notes: null,
@@ -1811,7 +1939,13 @@ function App() {
     }
   }
 
-  const moveScheduleEntry = async ({ entryId, dayOfWeek, startTime, endTime }) => {
+  const moveScheduleEntry = async ({
+    entryId,
+    dayOfWeek,
+    startTime,
+    endTime,
+    shiftType = SCHEDULE_SHIFT_TYPES.DAY,
+  }) => {
     const entry = scheduleEntriesForCurrentView.find((currentEntry) => currentEntry.id === entryId)
 
     if (!entry) {
@@ -1826,12 +1960,33 @@ function App() {
       return false
     }
 
-    if (hasScheduleConflict({ dayOfWeek, startTime, endTime, ignoreEntryId: entryId })) {
+    if (!isWholeHourTimeRange(startTime, endTime)) {
+      setLoadError('Es sind nur volle Stunden erlaubt.')
+      return false
+    }
+
+    const normalizedShiftType = normalizeScheduleShiftType(shiftType)
+
+    if (
+      hasScheduleConflict({
+        dayOfWeek,
+        startTime,
+        endTime,
+        ignoreEntryId: entryId,
+        shiftType: normalizedShiftType,
+      })
+    ) {
       setLoadError('Dieses Zeitfenster ist bereits belegt.')
       return false
     }
 
-    const scheduleDate = getIsoDateForWeekday(year, calendarWeek, dayOfWeek)
+    const scheduleDate = getScheduleDateForPlannerPlacement(
+      year,
+      calendarWeek,
+      dayOfWeek,
+      startTime,
+      normalizedShiftType,
+    )
     if (!scheduleDate) {
       setLoadError('Für die ausgewählte Kalenderwoche konnte kein gültiges Datum ermittelt werden.')
       return false
@@ -1841,6 +1996,7 @@ function App() {
       entryId,
       {
         date: scheduleDate,
+        shift_type: normalizedShiftType,
         start_time: startTime,
         end_time: endTime,
       },
@@ -1848,7 +2004,7 @@ function App() {
     )
   }
 
-  const copyPreviousWeekScheduleEntries = async () => {
+  const copyPreviousWeekScheduleEntries = async (shiftType = SCHEDULE_SHIFT_TYPES.DAY) => {
     if (isSavingSchedule) {
       return
     }
@@ -1864,11 +2020,15 @@ function App() {
       return
     }
 
+    const normalizedShiftType = normalizeScheduleShiftType(shiftType)
+    const currentShiftEntries =
+      scheduleEntriesForCurrentViewByShiftType[normalizedShiftType] ?? []
     const previousWeekEntries = scheduleEntries.filter(
       (entry) =>
         entry.employee_id === selectedEmployeeId &&
-        isIsoDateInCalendarWeek(
-          getScheduleEntryDate(entry),
+        getScheduleEntryShiftType(entry) === normalizedShiftType &&
+        isScheduleEntryInCalendarWeek(
+          entry,
           previousWeekState.year,
           previousWeekState.calendarWeek,
         ),
@@ -1881,18 +2041,18 @@ function App() {
       return
     }
 
-    const shouldReplaceExisting = scheduleEntriesForCurrentView.length > 0
+    const shouldReplaceExisting = currentShiftEntries.length > 0
     if (
       shouldReplaceExisting &&
       typeof window !== 'undefined' &&
       !window.confirm(
-        `KW ${calendarWeek}/${year} enthält bereits ${scheduleEntriesForCurrentView.length} Einsätze für ${selectedEmployeeLabel}. Soll die Woche mit KW ${previousWeekState.calendarWeek}/${previousWeekState.year} überschrieben werden?`,
+        `KW ${calendarWeek}/${year} enthält bereits ${currentShiftEntries.length} Einsätze für ${selectedEmployeeLabel}. Soll die Woche mit KW ${previousWeekState.calendarWeek}/${previousWeekState.year} überschrieben werden?`,
       )
     ) {
       return
     }
 
-    const targetWeekEntryIds = new Set(scheduleEntriesForCurrentView.map((entry) => entry.id))
+    const targetWeekEntryIds = new Set(currentShiftEntries.map((entry) => entry.id))
 
     setIsSavingSchedule(true)
 
@@ -1904,6 +2064,7 @@ function App() {
           employee_id: selectedEmployeeId,
           year,
           calendar_week: calendarWeek,
+          shift_type: normalizedShiftType,
           replace_existing: shouldReplaceExisting,
         }),
       })
@@ -2285,26 +2446,35 @@ function App() {
             />
 
             <PlanningWorkspace
-              key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}`}
+              key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}-${activePlannerConfig.shiftType}`}
               calendarWeek={calendarWeek}
               customersAvailableForWidget={customersAvailableForWidget}
               customers={customers}
               customersById={customersById}
               dashboardWeekLabel={dashboardWeekLabel}
+              hasScheduleConflict={hasScheduleConflict}
               isSavingSchedule={isSavingSchedule}
               onAddCustomerToWidget={addCustomerToWidget}
               onCalendarWeekChange={setCalendarWeek}
-              onCopyPreviousWeek={copyPreviousWeekScheduleEntries}
+              onCopyPreviousWeek={() => copyPreviousWeekScheduleEntries(activePlannerConfig.shiftType)}
               onCreateScheduleEntry={createScheduleEntry}
               onDeleteScheduleEntry={deleteScheduleEntry}
               onMoveScheduleEntry={moveScheduleEntry}
               onRemoveCustomerFromWidget={removeCustomerFromWidget}
               onYearChange={setYear}
+              plannerId={activePlannerConfig.plannerId}
+              plannerTitle={activePlannerConfig.plannerTitle}
+              plannerViewSwitcher={schedulePlannerViewSwitcher}
               scheduleDateRangeLabel={scheduleDateRangeLabel}
-              scheduleEntries={scheduleEntriesForCurrentView}
+              scheduleEntries={
+                scheduleEntriesForCurrentViewByShiftType[activePlannerConfig.shiftType] ?? []
+              }
               selectedEmployeeId={selectedEmployeeId}
               selectedEmployeeLabel={selectedEmployeeLabel}
+              shiftType={activePlannerConfig.shiftType}
               sidebarContent={employeeSelectionWidget}
+              timelineEndMinutes={activePlannerConfig.timelineEndMinutes}
+              timelineStartMinutes={activePlannerConfig.timelineStartMinutes}
               widgetCustomers={widgetCustomers}
               weekdays={weekdays}
               year={year}

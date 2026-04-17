@@ -1,5 +1,6 @@
 from datetime import date as date_type
 from datetime import datetime, time
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
@@ -20,11 +21,15 @@ WEEKDAY_NAMES = {
     7: "Sonntag",
 }
 
+SCHEDULE_SHIFT_TYPES = ("day", "night")
+ScheduleShiftType = Literal["day", "night"]
+
 
 class ScheduleEntryBase(BaseModel):
     employee_id: int
     customer_id: int
     date: date_type
+    shift_type: ScheduleShiftType = "day"
     start_time: time
     end_time: time
     notes: str | None = None
@@ -33,6 +38,19 @@ class ScheduleEntryBase(BaseModel):
     @classmethod
     def strip_strings(cls, value: str | None) -> str | None:
         return _strip_string(value)
+
+    @field_validator("shift_type", mode="before")
+    @classmethod
+    def normalize_shift_type(cls, value: str | None) -> str:
+        normalized_value = _strip_string(value)
+        if not normalized_value:
+            return "day"
+
+        normalized_value = normalized_value.lower()
+        if normalized_value not in SCHEDULE_SHIFT_TYPES:
+            raise ValueError("shift_type must be 'day' or 'night'")
+
+        return normalized_value
 
 
 class ScheduleEntryCreate(ScheduleEntryBase):
@@ -43,6 +61,7 @@ class ScheduleCopyPreviousWeekRequest(BaseModel):
     employee_id: int
     year: int
     calendar_week: int
+    shift_type: ScheduleShiftType = "day"
     replace_existing: bool = False
 
 
@@ -50,6 +69,7 @@ class ScheduleEntryUpdate(BaseModel):
     employee_id: int | None = None
     customer_id: int | None = None
     date: date_type | None = None
+    shift_type: ScheduleShiftType | None = None
     start_time: time | None = None
     end_time: time | None = None
     notes: str | None = None
@@ -58,6 +78,22 @@ class ScheduleEntryUpdate(BaseModel):
     @classmethod
     def strip_strings(cls, value: str | None) -> str | None:
         return _strip_string(value)
+
+    @field_validator("shift_type", mode="before")
+    @classmethod
+    def normalize_shift_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized_value = _strip_string(value)
+        if not normalized_value:
+            return None
+
+        normalized_value = normalized_value.lower()
+        if normalized_value not in SCHEDULE_SHIFT_TYPES:
+            raise ValueError("shift_type must be 'day' or 'night'")
+
+        return normalized_value
 
 
 class ScheduleEntryRead(ScheduleEntryBase):

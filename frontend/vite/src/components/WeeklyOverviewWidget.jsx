@@ -3,6 +3,11 @@ import {
   getDurationHoursBetweenTimes,
   getScheduleTimeRangeLabel,
 } from '../utils/scheduleTime'
+import {
+  getPlannerDayOfWeekForEntry,
+  getScheduleEntryEndTime as getScheduleEntryEndTimeValue,
+  getScheduleEntryStartTime as getScheduleEntryStartTimeValue,
+} from '../utils/scheduleShift'
 
 function getEmployeeDisplayName(employee) {
   if (!employee) {
@@ -31,20 +36,12 @@ const EMPLOYEE_AVATAR_COLORS = [
   '#374151',
 ]
 
-function getScheduleEntryDay(entry) {
-  return entry.day_of_week ?? entry.day ?? ''
-}
-
 function getScheduleEntryStartTime(entry) {
-  if (entry.time) {
-    return entry.time
-  }
-
-  return entry.start_time?.slice(0, 5) ?? ''
+  return getScheduleEntryStartTimeValue(entry)
 }
 
 function getScheduleEntryEndTime(entry) {
-  return entry.end_time?.slice(0, 5) ?? ''
+  return getScheduleEntryEndTimeValue(entry)
 }
 
 function getScheduleEntryDurationHours(entry) {
@@ -109,7 +106,7 @@ function WeeklyOverviewWidget({
 
   scheduleEntries.forEach((entry) => {
     const employeeId = entry.employee_id
-    const dayOfWeek = getScheduleEntryDay(entry)
+    const dayOfWeek = getPlannerDayOfWeekForEntry(entry, weekdays)
 
     if (!entriesByEmployeeId[employeeId]) {
       entriesByEmployeeId[employeeId] = {}
