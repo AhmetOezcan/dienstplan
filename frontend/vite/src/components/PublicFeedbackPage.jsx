@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   getFeedbackApiBaseUrl,
-  buildFeedbackPublicUrl,
 } from '../utils/feedbackPublic'
 
 const API_BASE_URL = getFeedbackApiBaseUrl()
@@ -87,8 +86,6 @@ export default function PublicFeedbackPage({ feedbackToken }) {
     }
   }, [feedbackToken])
 
-  const publicDashboardUrl = buildFeedbackPublicUrl(feedbackToken).replace(/\?feedback=.*$/, '')
-
   const handleFieldChange = (field, value) => {
     setFeedbackForm((currentForm) => ({
       ...currentForm,
@@ -130,7 +127,7 @@ export default function PublicFeedbackPage({ feedbackToken }) {
       <header className="page-header">
         <div>
           <p className="eyebrow">Feedback</p>
-          <h1>Rückmeldung senden</h1>
+          <h1>Feedback zur Reinigung</h1>
         </div>
       </header>
 
@@ -139,22 +136,12 @@ export default function PublicFeedbackPage({ feedbackToken }) {
 
       <section className="panel auth-panel feedback-public-panel" aria-label="Feedback Formular">
         <div className="auth-panel-header">
-          <h2>{feedbackPage?.account_name ?? 'Firma wird geladen...'}</h2>
+          <h2>Ihre Rückmeldung</h2>
           <p className="panel-note">
             {feedbackPage
-              ? 'Teilen Sie Ihre Rückmeldung direkt mit dieser Firma. Ihre Nachricht erscheint anschließend im Dashboard.'
+              ? 'Wenn bei Ihnen gereinigt wurde, können Sie hier kurz Ihre Erfahrung oder einen Hinweis hinterlassen.'
               : 'Die Zielseite wird geladen.'}
           </p>
-        </div>
-
-        <div className="feedback-public-summary">
-          <div className="session-pill">
-            <span className="session-label">Firma</span>
-            <strong>{feedbackPage?.account_name ?? 'Wird geladen...'}</strong>
-          </div>
-          <a href={publicDashboardUrl || '/'} className="secondary-button header-button">
-            Zur Startseite
-          </a>
         </div>
 
         {isLoadingPage ? (
@@ -174,10 +161,10 @@ export default function PublicFeedbackPage({ feedbackToken }) {
             </div>
 
             <div className="form-field">
-              <label htmlFor="public-feedback-message">Bemerkung</label>
+              <label htmlFor="public-feedback-message">Ihre Rückmeldung</label>
               <textarea
                 id="public-feedback-message"
-                placeholder="Ihre Rückmeldung"
+                placeholder="Was war gut, was sollen wir verbessern?"
                 value={feedbackForm.message}
                 onChange={(event) => handleFieldChange('message', event.target.value)}
                 maxLength={4000}

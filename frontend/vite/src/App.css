@@ -156,14 +156,6 @@ button:not(:disabled) {
   gap: 18px;
 }
 
-.feedback-public-summary {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
 .auth-panel-header {
   display: flex;
   flex-direction: column;
