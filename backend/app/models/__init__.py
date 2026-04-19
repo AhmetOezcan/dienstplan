@@ -1,6 +1,7 @@
 from .account import Account
 from .customer import Customer
 from .employee import Employee
+from .feedback_entry import FeedbackEntry
 from .invite_code import InviteCode
 from .login_attempt_tracker import LoginAttemptTracker
 from .schedule_entry import ScheduleEntry
@@ -15,5 +16,6 @@ __all__ = [
     "LoginAttemptTracker",
     "Employee",
     "Customer",
+    "FeedbackEntry",
     "ScheduleEntry",
 ]

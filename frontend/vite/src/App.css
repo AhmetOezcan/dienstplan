@@ -146,6 +146,24 @@ button:not(:disabled) {
   padding: 28px;
 }
 
+.feedback-public-app {
+  max-width: 860px;
+}
+
+.feedback-public-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.feedback-public-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .auth-panel-header {
   display: flex;
   flex-direction: column;
@@ -554,6 +572,22 @@ button:not(:disabled) {
   align-items: start;
 }
 
+.dashboard-analytics-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: start;
+}
+
+.dashboard-analytics-row > * {
+  min-width: 0;
+}
+
+.dashboard-analytics-row .feedback-widget {
+  flex: 1 1 320px;
+  min-width: 320px;
+}
+
 .planning-workspace-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
@@ -914,6 +948,10 @@ button:not(:disabled) {
       rgba(100, 116, 139, 0.6) 0,
       rgba(100, 116, 139, 0.6) 2px,
       transparent 2px,
+      transparent calc(var(--planner-half-hour-height) - 1px),
+      rgba(100, 116, 139, 0.28) calc(var(--planner-half-hour-height) - 1px),
+      rgba(100, 116, 139, 0.28) var(--planner-half-hour-height),
+      transparent var(--planner-half-hour-height),
       transparent var(--planner-hour-height)
     );
 }
@@ -984,6 +1022,77 @@ button:not(:disabled) {
   background: linear-gradient(180deg, #ffffff 0%, #f3f7ff 100%);
 }
 
+.feedback-widget {
+  min-height: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+}
+
+.feedback-widget-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.feedback-widget-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.feedback-widget-card-header h3 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.feedback-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 480px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.feedback-entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.feedback-entry-topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.feedback-entry-topline strong {
+  font-size: 0.94rem;
+}
+
+.feedback-entry-topline span {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.feedback-entry-card p {
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .widget-topline {
   display: flex;
   align-items: flex-start;
@@ -1037,6 +1146,12 @@ button:not(:disabled) {
   min-height: 38px;
   padding: 0 14px;
   white-space: nowrap;
+}
+
+.widget-print-button-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .widget-count-pill {
@@ -1912,6 +2027,10 @@ button:not(:disabled) {
     rgba(71, 85, 105, 0.72) 0,
     rgba(71, 85, 105, 0.72) 2px,
     transparent 2px,
+    transparent calc(var(--planner-half-hour-height) - 1px),
+    rgba(71, 85, 105, 0.24) calc(var(--planner-half-hour-height) - 1px),
+    rgba(71, 85, 105, 0.24) var(--planner-half-hour-height),
+    transparent var(--planner-half-hour-height),
     transparent var(--planner-hour-height)
   );
   pointer-events: none;
@@ -1984,6 +2103,10 @@ button:not(:disabled) {
     rgba(71, 85, 105, 0.72) 0,
     rgba(71, 85, 105, 0.72) 2px,
     transparent 2px,
+    transparent calc(var(--planner-half-hour-height) - 1px),
+    rgba(71, 85, 105, 0.24) calc(var(--planner-half-hour-height) - 1px),
+    rgba(71, 85, 105, 0.24) var(--planner-half-hour-height),
+    transparent var(--planner-half-hour-height),
     transparent var(--planner-hour-height)
   );
   pointer-events: none;
@@ -2026,7 +2149,7 @@ button:not(:disabled) {
 
 .planner-entry-card {
   z-index: 2;
-  padding: 7px 7px 11px;
+  padding: 7px 30px 11px 7px;
   border: 1px solid rgba(15, 23, 42, 0.28);
   box-shadow: none;
   background-image: none;
@@ -2050,8 +2173,47 @@ button:not(:disabled) {
 
 .planner-entry-card-short {
   justify-content: center;
-  padding: 6px 24px 10px 6px;
+  padding: 6px 28px 10px 6px;
   gap: 1px;
+}
+
+.planner-entry-card-tiny {
+  justify-content: center;
+  padding: 3px 22px 7px 4px;
+  gap: 0;
+}
+
+.planner-entry-card-tiny .planner-entry-topline,
+.planner-entry-card-tiny .planner-entry-time,
+.planner-entry-card-tiny .planner-entry-address,
+.planner-entry-card-tiny .planner-entry-overflow-note {
+  display: none;
+}
+
+.planner-entry-card-tiny .planner-entry-name {
+  font-size: 0.64rem;
+  line-height: 1.05;
+  -webkit-line-clamp: 1;
+}
+
+.planner-entry-card-tiny .planner-entry-delete {
+  top: 2px;
+  right: 2px;
+  width: 15px;
+  height: 15px;
+  font-size: 0.64rem;
+}
+
+.planner-entry-card-tiny .planner-entry-resize-handle {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+}
+
+.planner-entry-card-tiny .planner-entry-resize-handle span {
+  width: 14px;
+  margin-top: 1px;
 }
 
 .planner-entry-card-short .planner-entry-topline {
@@ -2075,13 +2237,13 @@ button:not(:disabled) {
 
 .planner-entry-card-short .planner-entry-delete {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  border: none;
-  background: transparent;
+  border: 1px solid rgba(15, 23, 42, 0.26);
+  background: rgba(255, 255, 255, 0.24);
   font-size: 0.72rem;
 }
 
@@ -2158,7 +2320,7 @@ button:not(:disabled) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 4px;
 }
 
@@ -2208,9 +2370,15 @@ button:not(:disabled) {
 }
 
 .planner-entry-delete {
+  position: absolute;
+  top: 5px;
+  right: 5px;
   flex-shrink: 0;
   width: 20px;
   height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(15, 23, 42, 0.2);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.16);
@@ -2218,6 +2386,8 @@ button:not(:disabled) {
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1;
+  z-index: 3;
+  touch-action: manipulation;
 }
 
 .planner-entry-resize-handle {
@@ -2483,6 +2653,10 @@ button:not(:disabled) {
 }
 
 @media (max-width: 1240px) {
+  .dashboard-analytics-row {
+    flex-direction: column;
+  }
+
   .planning-workspace-layout {
     grid-template-columns: 1fr;
   }

@@ -6,6 +6,8 @@ from app.database import engine
 
 from app.routes.auth import router as auth_router
 from app.routes.employees import router as employees_router
+from app.routes.feedback import auth_router as feedback_auth_router
+from app.routes.feedback import router as feedback_router
 from app.routes.invite_codes import router as invite_codes_router
 from app.routes.customers import router as customers_router
 from app.routes.schedules import router as schedules_router
@@ -36,6 +38,8 @@ app.add_middleware(
 
 #datein einbinden
 app.include_router(auth_router)
+app.include_router(feedback_router)
+app.include_router(feedback_auth_router)
 app.include_router(invite_codes_router)
 app.include_router(employees_router)
 app.include_router(customers_router)

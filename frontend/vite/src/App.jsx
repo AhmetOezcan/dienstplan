@@ -5,7 +5,7 @@ import WeeklyOverviewWidget from './components/WeeklyOverviewWidget'
 import {
   getDurationHoursBetweenTimes,
   getNormalizedTimeRange,
-  isWholeHourTimeRange,
+  isHalfHourTimeRange,
 } from './utils/scheduleTime'
 import {
   DAY_SHIFT_END_MINUTES,
@@ -22,6 +22,7 @@ import {
   getShiftAnchorIsoDate,
   normalizeScheduleShiftType,
 } from './utils/scheduleShift'
+import { buildFeedbackPublicUrl, buildFeedbackQrCodeUrl } from './utils/feedbackPublic'
 
 const weekdays = [
   'Montag',
@@ -580,6 +581,40 @@ function getCompactEmployeeLabel(label) {
   return firstSegment.length > 7 ? `${firstSegment.slice(0, 6)}…` : firstSegment
 }
 
+function formatFeedbackTimestamp(timestampValue) {
+  if (typeof timestampValue !== 'string' || !timestampValue) {
+    return ''
+  }
+
+  const timestamp = new Date(timestampValue)
+  if (Number.isNaN(timestamp.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('de-AT', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp)
+}
+
+function getFeedbackQrFileName(accountName) {
+  if (typeof accountName !== 'string' || !accountName.trim()) {
+    return 'feedback-qr-code.png'
+  }
+
+  const normalizedAccountName = accountName
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return `${normalizedAccountName || 'feedback'}-qr-code.png`
+}
+
 function WeeklyHoursWidget({
   dashboardWeekLabel,
   employees,
@@ -703,6 +738,108 @@ function WeeklyHoursWidget({
           </div>
         </div>
       )}
+    </section>
+  )
+}
+
+function FeedbackWidget({
+  feedbackEntries,
+  feedbackSettings,
+}) {
+  const feedbackPublicUrl = buildFeedbackPublicUrl(feedbackSettings?.feedback_public_token)
+  const feedbackQrCodeUrl = buildFeedbackQrCodeUrl(feedbackPublicUrl, {
+    format: 'png',
+    size: 480,
+  })
+  const recentFeedbackEntries = feedbackEntries.slice(0, 6)
+  const feedbackQrFileName = getFeedbackQrFileName(feedbackSettings?.account_name)
+
+  const handleDownloadQrCode = async () => {
+    if (!feedbackQrCodeUrl || typeof window === 'undefined' || typeof document === 'undefined') {
+      return
+    }
+
+    try {
+      const response = await fetch(feedbackQrCodeUrl)
+      if (!response.ok) {
+        throw new Error('QR code download failed')
+      }
+
+      const qrCodeBlob = await response.blob()
+      const objectUrl = window.URL.createObjectURL(qrCodeBlob)
+      const downloadLink = document.createElement('a')
+      downloadLink.href = objectUrl
+      downloadLink.download = feedbackQrFileName
+      document.body.append(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+      window.URL.revokeObjectURL(objectUrl)
+    } catch {
+      window.open(feedbackQrCodeUrl, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  return (
+    <section
+      id="feedback-widget"
+      className="panel dashboard-widget feedback-widget"
+      aria-label="Kundenfeedback"
+    >
+      <div className="widget-topline">
+        <div>
+          <h2>Feedback</h2>
+          <p className="widget-note">
+            Allgemeines Kundenfeedback für {feedbackSettings?.account_name ?? 'den aktiven Account'}.
+          </p>
+        </div>
+        <div className="widget-topline-actions">
+          <button
+            type="button"
+            className="secondary-button widget-print-button"
+            disabled={!feedbackPublicUrl || !feedbackQrCodeUrl}
+            aria-label="QR-Code als PNG herunterladen"
+            title="QR-Code als PNG herunterladen"
+            onClick={() => void handleDownloadQrCode()}
+          >
+            <svg
+              className="widget-print-button-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M3 3h7v7H3V3Zm2 2v3h3V5H5Zm9-2h7v7h-7V3Zm2 2v3h3V5h-3ZM3 14h7v7H3v-7Zm2 2v3h3v-3H5Zm9-2h2v2h-2v-2Zm3 0h4v2h-4v-2Zm-3 3h2v2h-2v-2Zm3 0h2v2h-2v-2Zm3 0h1v4h-4v-2h3v-2Zm-8 3h2v1h-2v-1Zm3 0h4v1h-4v-1Zm-3-9h2v2h-2v-2Zm3 0h1v1h-1v-1Zm2 0h3v2h-3v-2Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+          <span className="widget-count-pill widget-count-pill-accent">
+            {String(feedbackEntries.length).padStart(2, '0')}
+          </span>
+        </div>
+      </div>
+
+      <section className="feedback-widget-card feedback-widget-list-card">
+        <div className="feedback-widget-card-header">
+          <h3>Letzte Rückmeldungen</h3>
+          <span className="widget-note">Direkt aus dem öffentlichen Formular</span>
+        </div>
+
+        {recentFeedbackEntries.length > 0 ? (
+          <div className="feedback-entry-list">
+            {recentFeedbackEntries.map((feedbackEntry) => (
+              <article key={feedbackEntry.id} className="feedback-entry-card">
+                <div className="feedback-entry-topline">
+                  <strong>{feedbackEntry.author_name || 'Anonym'}</strong>
+                  <span>{formatFeedbackTimestamp(feedbackEntry.created_at)}</span>
+                </div>
+                <p>{feedbackEntry.message}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-state">Noch keine Rückmeldungen vorhanden.</p>
+        )}
+      </section>
     </section>
   )
 }
@@ -1160,6 +1297,8 @@ function App() {
   )
   const [employees, setEmployees] = useState([])
   const [customers, setCustomers] = useState([])
+  const [feedbackEntries, setFeedbackEntries] = useState([])
+  const [feedbackSettings, setFeedbackSettings] = useState(null)
   const [scheduleEntries, setScheduleEntries] = useState([])
   const [activeDashboardSection, setActiveDashboardSection] = useState('schedule')
   const [isLegalMenuOpen, setIsLegalMenuOpen] = useState(false)
@@ -1219,6 +1358,8 @@ function App() {
     if (!isAuthenticated || requiresInitialSetup) {
       setEmployees([])
       setCustomers([])
+      setFeedbackEntries([])
+      setFeedbackSettings(null)
       setScheduleEntries([])
       setActiveDashboardSection('schedule')
       setIsLegalMenuOpen(false)
@@ -1235,12 +1376,26 @@ function App() {
       setLoadError('')
 
       try {
-        const [loadedEmployees, loadedCustomers, loadedScheduleEntries] = await Promise.all([
+        const [
+          loadedEmployees,
+          loadedCustomers,
+          loadedFeedbackEntries,
+          loadedFeedbackSettings,
+          loadedScheduleEntries,
+        ] = await Promise.all([
           apiRequest('/employees', {
             signal: abortController.signal,
             accessToken: authToken,
           }),
           apiRequest('/customers', {
+            signal: abortController.signal,
+            accessToken: authToken,
+          }),
+          apiRequest('/feedback_entries', {
+            signal: abortController.signal,
+            accessToken: authToken,
+          }),
+          apiRequest('/feedback_entries/settings', {
             signal: abortController.signal,
             accessToken: authToken,
           }),
@@ -1255,6 +1410,8 @@ function App() {
 
         setEmployees(sortedEmployees)
         setCustomers(sortedCustomers)
+        setFeedbackEntries(loadedFeedbackEntries)
+        setFeedbackSettings(loadedFeedbackSettings)
         setScheduleEntries(sortScheduleEntries(loadedScheduleEntries))
         setSelectedEmployeeId((currentEmployeeId) => {
           if (
@@ -1276,6 +1433,8 @@ function App() {
           setAuthSession(createEmptyAuthSession())
           setEmployees([])
           setCustomers([])
+          setFeedbackEntries([])
+          setFeedbackSettings(null)
           setScheduleEntries([])
           setActiveDashboardSection('schedule')
           setIsLegalMenuOpen(false)
@@ -1433,6 +1592,8 @@ function App() {
     setSetupForm(createInitialSetupForm())
     setEmployees([])
     setCustomers([])
+    setFeedbackEntries([])
+    setFeedbackSettings(null)
     setCustomerWidgetCustomerIds([])
     setScheduleEntries([])
     setActiveDashboardSection('schedule')
@@ -1847,8 +2008,8 @@ function App() {
       return false
     }
 
-    if (!isWholeHourTimeRange(startTime, endTime)) {
-      setLoadError('Es sind nur volle Stunden erlaubt.')
+    if (!isHalfHourTimeRange(startTime, endTime)) {
+      setLoadError('Es sind nur 30-Minuten-Schritte erlaubt.')
       return false
     }
 
@@ -1960,8 +2121,8 @@ function App() {
       return false
     }
 
-    if (!isWholeHourTimeRange(startTime, endTime)) {
-      setLoadError('Es sind nur volle Stunden erlaubt.')
+    if (!isHalfHourTimeRange(startTime, endTime)) {
+      setLoadError('Es sind nur 30-Minuten-Schritte erlaubt.')
       return false
     }
 
@@ -2093,6 +2254,8 @@ function App() {
       return
     }
 
+    const entryToDelete = scheduleEntries.find((entry) => entry.id === entryId) ?? null
+
     setIsSavingSchedule(true)
 
     try {
@@ -2104,6 +2267,11 @@ function App() {
       setScheduleEntries((currentEntries) =>
         currentEntries.filter((entry) => entry.id !== entryId),
       )
+
+      if (entryToDelete?.customer_id) {
+        addCustomerToWidget(entryToDelete.customer_id)
+      }
+
       setLoadError('')
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
@@ -2433,18 +2601,6 @@ function App() {
 
         {isScheduleSectionActive ? (
           <section className="dashboard-widget-grid">
-            <WeeklyOverviewWidget
-              calendarWeek={calendarWeek}
-              customersById={customersById}
-              dashboardWeekLabel={dashboardWeekLabel}
-              employees={employees}
-              scheduleDateRangeLabel={scheduleDateRangeLabel}
-              scheduleEntries={scheduleEntriesForSelectedWeek}
-              selectedEmployeeId={selectedEmployeeId}
-              weekdays={weekdays}
-              year={year}
-            />
-
             <PlanningWorkspace
               key={`${selectedEmployeeId ?? 'none'}-${year}-${calendarWeek}-${activePlannerConfig.shiftType}`}
               calendarWeek={calendarWeek}
@@ -2480,12 +2636,31 @@ function App() {
               year={year}
             />
 
-            <WeeklyHoursWidget
+            <WeeklyOverviewWidget
+              calendarWeek={calendarWeek}
+              customersById={customersById}
               dashboardWeekLabel={dashboardWeekLabel}
               employees={employees}
+              scheduleDateRangeLabel={scheduleDateRangeLabel}
               scheduleEntries={scheduleEntriesForSelectedWeek}
               selectedEmployeeId={selectedEmployeeId}
+              weekdays={weekdays}
+              year={year}
             />
+
+            <div className="dashboard-analytics-row">
+              <WeeklyHoursWidget
+                dashboardWeekLabel={dashboardWeekLabel}
+                employees={employees}
+                scheduleEntries={scheduleEntriesForSelectedWeek}
+                selectedEmployeeId={selectedEmployeeId}
+              />
+
+              <FeedbackWidget
+                feedbackEntries={feedbackEntries}
+                feedbackSettings={feedbackSettings}
+              />
+            </div>
           </section>
         ) : null}
 

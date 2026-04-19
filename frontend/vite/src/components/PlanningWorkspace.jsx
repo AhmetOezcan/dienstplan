@@ -17,8 +17,8 @@ const AUTO_SCROLL_STEP = 22
 const WINDOW_AUTO_SCROLL_EDGE = 72
 const WINDOW_AUTO_SCROLL_STEP = 18
 const DRAG_ACTIVATION_DISTANCE = 6
-const TIMELINE_INTERVAL_MINUTES = 60
-const TIMELINE_MIN_DURATION_MINUTES = 60
+const TIMELINE_INTERVAL_MINUTES = 30
+const TIMELINE_MIN_DURATION_MINUTES = 30
 
 function getTimelineMetrics(viewportWidth) {
   const normalizedViewportWidth =
@@ -354,6 +354,10 @@ function PlanningWorkspace({
   const timelineMetrics = getTimelineMetrics(viewportWidth)
   const boardShellStyle = {
     '--planner-hour-height': `${timelineMetrics.hourHeight}px`,
+    '--planner-half-hour-height': `${getPixelsFromDuration(
+      TIMELINE_INTERVAL_MINUTES,
+      timelineMetrics.hourHeight,
+    )}px`,
     '--planner-board-height': `${getPixelsFromDuration(
       timelineVisibleDurationMinutes,
       timelineMetrics.hourHeight,
@@ -939,6 +943,15 @@ function PlanningWorkspace({
     void onDeleteScheduleEntry(entryId)
   }
 
+  const handleDeleteButtonPointerDown = (event) => {
+    event.stopPropagation()
+  }
+
+  const handleDeleteButtonClick = (entryId, event) => {
+    event.stopPropagation()
+    handleDeleteScheduleEntry(entryId)
+  }
+
   const livePreviewTimeRangeLabel = previewPlacement
     ? getScheduleTimeRangeLabel(previewPlacement.startTime, previewPlacement.endTime)
     : ''
@@ -1151,6 +1164,7 @@ function PlanningWorkspace({
                               interaction?.mode === 'move' && interaction.entryId === entry.id
                             const isResizingEntry =
                               interaction?.mode === 'resize' && interaction.entryId === entry.id
+                            const isTinyEntry = entryLayout.visibleDurationMinutes <= 30
                             const isCompactEntry = entryLayout.visibleDurationMinutes <= 45
                             const isShortEntry = entryLayout.visibleDurationMinutes <= 60
 
@@ -1159,7 +1173,9 @@ function PlanningWorkspace({
                                 key={entry.id}
                                 className={`planner-entry-card${
                                   isMovingEntry || isResizingEntry ? ' planner-entry-card-moving' : ''
-                                }${isCompactEntry ? ' planner-entry-card-compact' : ''}${
+                                }${isTinyEntry ? ' planner-entry-card-tiny' : ''}${
+                                  isCompactEntry ? ' planner-entry-card-compact' : ''
+                                }${
                                   isShortEntry ? ' planner-entry-card-short' : ''
                                 }`}
                                 style={{
@@ -1179,15 +1195,6 @@ function PlanningWorkspace({
                                   ) : (
                                     <span className="planner-entry-chip">Einsatz</span>
                                   )}
-                                  <button
-                                    type="button"
-                                    className="planner-entry-delete"
-                                    aria-label="Einsatz entfernen"
-                                    disabled={isSavingSchedule}
-                                    onClick={() => handleDeleteScheduleEntry(entry.id)}
-                                  >
-                                    ×
-                                  </button>
                                 </div>
 
                                 <strong className="planner-entry-name">
@@ -1202,6 +1209,17 @@ function PlanningWorkspace({
                                     außerhalb {plannerRangeLabel}
                                   </span>
                                 ) : null}
+
+                                <button
+                                  type="button"
+                                  className="planner-entry-delete"
+                                  aria-label="Einsatz entfernen"
+                                  disabled={isSavingSchedule}
+                                  onPointerDown={handleDeleteButtonPointerDown}
+                                  onClick={(event) => handleDeleteButtonClick(entry.id, event)}
+                                >
+                                  ×
+                                </button>
 
                                 <button
                                   type="button"

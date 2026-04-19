@@ -54,6 +54,22 @@ export function isWholeHourTimeRange(startTime, endTime) {
   return isWholeHourTimeValue(startTime) && isWholeHourTimeValue(endTime)
 }
 
+export function isHalfHourTimeValue(timeValue) {
+  const minutes = getTimeValueInMinutes(timeValue)
+
+  return minutes !== null && minutes % 30 === 0
+}
+
+export function isHalfHourTimeRange(startTime, endTime) {
+  const normalizedTimeRange = getNormalizedTimeRange(startTime, endTime)
+
+  if (!normalizedTimeRange) {
+    return false
+  }
+
+  return isHalfHourTimeValue(startTime) && isHalfHourTimeValue(endTime)
+}
+
 export function getDurationHoursBetweenTimes(startTime, endTime) {
   const normalizedTimeRange = getNormalizedTimeRange(startTime, endTime)
 
