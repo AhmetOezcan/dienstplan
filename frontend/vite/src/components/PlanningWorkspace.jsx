@@ -135,6 +135,29 @@ function buildTimelineHourMarkers(timelineStartMinutes, timelineEndMinutes) {
   )
 }
 
+function getStartDateOfIsoWeek(year, calendarWeek) {
+  if (!Number.isInteger(year) || !Number.isInteger(calendarWeek) || calendarWeek < 1 || calendarWeek > 53) {
+    return null
+  }
+
+  const januaryFourth = new Date(Date.UTC(year, 0, 4))
+  const januaryFourthDay = januaryFourth.getUTCDay() || 7
+  const mondayOfFirstWeek = new Date(januaryFourth)
+  mondayOfFirstWeek.setUTCDate(januaryFourth.getUTCDate() - januaryFourthDay + 1)
+
+  const weekStart = new Date(mondayOfFirstWeek)
+  weekStart.setUTCDate(mondayOfFirstWeek.getUTCDate() + (calendarWeek - 1) * 7)
+  return weekStart
+}
+
+function formatPlannerHeaderDate(date) {
+  return new Intl.DateTimeFormat('de-AT', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
 function getReadableTextColor(backgroundColor) {
   if (typeof backgroundColor !== 'string' || !backgroundColor.startsWith('#')) {
     return '#ffffff'
@@ -373,6 +396,26 @@ function PlanningWorkspace({
   const dayTrackStyle = {
     gridTemplateColumns: `repeat(${weekdays.length}, minmax(${timelineMetrics.dayMinWidth}px, 1fr))`,
   }
+  const plannerDayHeaders = (() => {
+    const weekStart = getStartDateOfIsoWeek(year, calendarWeek)
+
+    return weekdays.map((day, index) => {
+      if (!weekStart) {
+        return {
+          day,
+          dateLabel: '',
+        }
+      }
+
+      const dayDate = new Date(weekStart)
+      dayDate.setUTCDate(weekStart.getUTCDate() + index)
+
+      return {
+        day,
+        dateLabel: formatPlannerHeaderDate(dayDate),
+      }
+    })
+  })()
   const plannerRangeLabel = `${getTimeValueFromMinutes(
     resolvedTimelineStartMinutes,
   )}-${getTimeValueFromMinutes(resolvedTimelineEndMinutes)} Uhr`
@@ -1064,7 +1107,7 @@ function PlanningWorkspace({
                 </div>
 
                 <div className="planner-day-header-track" style={dayTrackStyle}>
-                  {weekdays.map((day) => (
+                  {plannerDayHeaders.map(({ day, dateLabel }) => (
                     <div
                       key={`${day}-header`}
                       className={`planner-day-header-cell${
@@ -1072,6 +1115,7 @@ function PlanningWorkspace({
                       }`}
                     >
                       <span>{day}</span>
+                      {dateLabel ? <small>{dateLabel}</small> : null}
                     </div>
                   ))}
                 </div>
