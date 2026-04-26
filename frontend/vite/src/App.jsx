@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import LandingPage from './components/LandingPage'
 import PlanningWorkspace from './components/PlanningWorkspace'
 import WeeklyOverviewWidget from './components/WeeklyOverviewWidget'
 import {
@@ -1291,6 +1292,7 @@ function App() {
     initialAuthSession.user?.id ?? null,
   )
   const [authSession, setAuthSession] = useState(initialAuthSession)
+  const [showLanding, setShowLanding] = useState(!initialAuthSession.accessToken)
   const [loginForm, setLoginForm] = useState(createInitialLoginForm)
   const [setupForm, setSetupForm] = useState(() =>
     createInitialSetupForm(initialAuthSession.user?.full_name ?? ''),
@@ -1605,6 +1607,7 @@ function App() {
     setIsCompletingSetup(false)
     setPendingEmployeeDeleteId(null)
     setPendingCustomerDeleteId(null)
+    setShowLanding(true)
   }
 
   const resetEmployeeForm = () => {
@@ -2295,11 +2298,16 @@ function App() {
     setIsLegalMenuOpen(false)
   }
 
+  if (!isAuthenticated && showLanding) {
+    return <LandingPage onLogin={() => setShowLanding(false)} />
+  }
+
   if (!isAuthenticated) {
     return (
       <main className="app auth-app">
         <header className="page-header">
           <div>
+            <img src="/logo_oc.png" alt="Ordo Cloud" style={{ width: 48, height: 48, objectFit: 'contain', marginBottom: '0.5rem' }} />
             <p className="eyebrow">{APP_NAME}</p>
             <h1>Dienstplanung für Teams</h1>
           </div>
@@ -2365,6 +2373,7 @@ function App() {
       <main className="app auth-app">
         <header className="page-header page-header-row">
           <div>
+            <img src="/logo_oc.png" alt="Ordo Cloud" style={{ width: 48, height: 48, objectFit: 'contain', marginBottom: '0.5rem' }} />
             <p className="eyebrow">{APP_NAME}</p>
             <h1>Dienstplanung für Teams</h1>
           </div>
@@ -2502,6 +2511,7 @@ function App() {
       <section className="dashboard-shell">
         <header className="dashboard-header">
           <div className="dashboard-brand">
+            <img src="/logo_oc.png" alt="Ordo Cloud" style={{ width: 32, height: 32, objectFit: 'contain' }} />
             <span className="dashboard-brand-kicker">Dienstplanung</span>
             <strong className="dashboard-brand-name">{APP_NAME}</strong>
             <span className="dashboard-brand-note">
