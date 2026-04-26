@@ -2317,8 +2317,6 @@ function App() {
           <div className="auth-panel-header">
             <h2>Login</h2>
             <p className="panel-note">
-              Melde dich mit deinem Benutzerkonto an. Geschützte Backend-Routen werden danach
-              automatisch mit Bearer-Token aufgerufen.
             </p>
           </div>
           <form className="auth-form" onSubmit={handleLoginSubmit}>
@@ -2360,9 +2358,6 @@ function App() {
               </button>
             </div>
           </form>
-          <p className="panel-note auth-note">
-            Registrierung mit Invite-Code läuft aktuell über `POST /auth/register`.
-          </p>
         </section>
       </main>
     )
