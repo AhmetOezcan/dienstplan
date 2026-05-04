@@ -41,18 +41,15 @@ _LIMIT_RULES = (
 
 
 def get_login_client_ip(request: Request) -> str:
-    # Reverse proxies must strip and overwrite forwarded client IP headers.
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
-        forwarded_ip = forwarded_for.split(",", maxsplit=1)[0].strip()
-        if forwarded_ip:
-            return forwarded_ip[:IDENTIFIER_MAX_LENGTH]
-
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        normalized_real_ip = real_ip.strip()
-        if normalized_real_ip:
-            return normalized_real_ip[:IDENTIFIER_MAX_LENGTH]
+        # Railway (and most reverse proxies) append the real client IP at the end.
+        # Taking the rightmost non-empty value prevents attackers from spoofing
+        # their IP by injecting a fake X-Forwarded-For header at the front.
+        ips = [ip.strip() for ip in forwarded_for.split(",")]
+        rightmost = next((ip for ip in reversed(ips) if ip), None)
+        if rightmost:
+            return rightmost[:IDENTIFIER_MAX_LENGTH]
 
     if request.client is not None and request.client.host:
         return request.client.host[:IDENTIFIER_MAX_LENGTH]

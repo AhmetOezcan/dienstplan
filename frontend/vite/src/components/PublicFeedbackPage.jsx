@@ -40,6 +40,7 @@ function createInitialFeedbackForm() {
   return {
     authorName: '',
     message: '',
+    website: '',
   }
 }
 
@@ -111,6 +112,7 @@ export default function PublicFeedbackPage({ feedbackToken }) {
         body: JSON.stringify({
           author_name: feedbackForm.authorName,
           message: feedbackForm.message,
+          website: feedbackForm.website,
         }),
       })
       setFeedbackForm(createInitialFeedbackForm())
@@ -148,6 +150,19 @@ export default function PublicFeedbackPage({ feedbackToken }) {
           <p className="empty-state">Feedback-Seite wird geladen...</p>
         ) : feedbackPage ? (
           <form className="auth-form" onSubmit={handleSubmit}>
+            {/* Honeypot: hidden from real users, bots auto-fill it */}
+            <div style={{ position: 'absolute', left: '-9999px', top: 'auto', width: '1px', height: '1px', overflow: 'hidden' }} aria-hidden="true">
+              <label htmlFor="public-feedback-website">Website</label>
+              <input
+                id="public-feedback-website"
+                type="text"
+                tabIndex={-1}
+                autoComplete="off"
+                value={feedbackForm.website}
+                onChange={(event) => handleFieldChange('website', event.target.value)}
+              />
+            </div>
+
             <div className="form-field">
               <label htmlFor="public-feedback-author-name">Ihr Name</label>
               <input

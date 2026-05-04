@@ -14,6 +14,8 @@ def _strip_string(value: str | None) -> str | None:
 class FeedbackEntryCreate(BaseModel):
     author_name: str | None = Field(default=None, max_length=255)
     message: str = Field(min_length=1, max_length=4000)
+    # Honeypot: must always be empty. Bots auto-fill it; real users never see it.
+    website: str | None = Field(default=None, max_length=255)
 
     @field_validator("author_name", "message", mode="before")
     @classmethod

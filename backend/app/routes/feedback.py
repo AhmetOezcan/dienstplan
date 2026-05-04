@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,9 +15,12 @@ from app.schemas.feedback import (
     FeedbackWidgetSettingsRead,
 )
 from app.security import get_auth_context, get_current_account
+from app.services.ip_rate_limiter import IpRateLimiter
 
 router = APIRouter()
 auth_router = APIRouter(dependencies=[Depends(get_auth_context)])
+
+_feedback_limiter = IpRateLimiter(max_requests=5, window=timedelta(minutes=10))
 
 
 def get_account_by_feedback_token(feedback_public_token: str, db: Session) -> Account:
@@ -52,10 +57,24 @@ def get_public_feedback_page(
 def create_public_feedback_entry(
     feedback_public_token: str,
     payload: FeedbackEntryCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    _feedback_limiter.check(request)
+
+    # Honeypot: bots fill the hidden "website" field, humans never see it.
+    # Silently succeed so the bot assumes its request worked.
+    if payload.website:
+        return FeedbackEntryRead(
+            id=0,
+            account_id=0,
+            author_name=payload.author_name,
+            message=payload.message,
+            created_at=datetime.now(timezone.utc),
+        )
+
     account = get_account_by_feedback_token(feedback_public_token, db)
-    feedback_entry = FeedbackEntry(account_id=account.id, **payload.model_dump())
+    feedback_entry = FeedbackEntry(account_id=account.id, **payload.model_dump(exclude={"website"}))
     db.add(feedback_entry)
 
     try:
