@@ -185,7 +185,7 @@ function normalizeCustomerWidgetCustomerIds(customerIds) {
     return []
   }
 
-  return [...new Set(customerIds.filter((customerId) => Number.isInteger(customerId) && customerId > 0))]
+  return customerIds.filter((customerId) => Number.isInteger(customerId) && customerId > 0)
 }
 
 function getStoredCustomerWidgetCustomerIdsByKey(storageKey) {
@@ -1532,9 +1532,19 @@ function App() {
   const scheduleDateRangeLabel = getCalendarWeekDateRangeLabel(year, calendarWeek)
   const customersById = Object.fromEntries(customers.map((customer) => [customer.id, customer]))
   const customerWidgetIdSet = new Set(customerWidgetCustomerIds)
+  const widgetCustomerCountById = customerWidgetCustomerIds.reduce((acc, id) => {
+    acc[id] = (acc[id] ?? 0) + 1
+    return acc
+  }, {})
+  const seenWidgetIds = new Set()
   const widgetCustomers = customerWidgetCustomerIds
     .map((customerId) => customersById[customerId] ?? null)
-    .filter(Boolean)
+    .filter((customer) => {
+      if (!customer || seenWidgetIds.has(customer.id)) return false
+      seenWidgetIds.add(customer.id)
+      return true
+    })
+    .map((customer) => ({ ...customer, widgetCount: widgetCustomerCountById[customer.id] ?? 1 }))
   const customersAvailableForWidget = customers.filter(
     (customer) => !customerWidgetIdSet.has(customer.id),
   )
@@ -1921,19 +1931,15 @@ function App() {
       return
     }
 
-    setCustomerWidgetCustomerIds((currentCustomerIds) => {
-      if (currentCustomerIds.includes(customerId)) {
-        return currentCustomerIds
-      }
-
-      return [...currentCustomerIds, customerId]
-    })
+    setCustomerWidgetCustomerIds((currentCustomerIds) => [...currentCustomerIds, customerId])
   }
 
   const removeCustomerFromWidget = (customerId) => {
-    setCustomerWidgetCustomerIds((currentCustomerIds) =>
-      currentCustomerIds.filter((currentCustomerId) => currentCustomerId !== customerId),
-    )
+    setCustomerWidgetCustomerIds((currentCustomerIds) => {
+      const index = currentCustomerIds.indexOf(customerId)
+      if (index === -1) return currentCustomerIds
+      return [...currentCustomerIds.slice(0, index), ...currentCustomerIds.slice(index + 1)]
+    })
   }
 
   const hasScheduleConflict = ({

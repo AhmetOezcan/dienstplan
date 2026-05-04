@@ -1265,6 +1265,7 @@ function PlanningWorkspace({
                                   ×
                                 </button>
 
+
                                 <button
                                   type="button"
                                   className="planner-entry-resize-handle"
@@ -1561,14 +1562,27 @@ function PlanningWorkspace({
                     ) : null}
                   </div>
                   <div className="customer-card-actions">
-                    <button
-                      type="button"
-                      className="customer-card-remove"
-                      aria-label={`${customer.name} aus dem Widget entfernen`}
-                      onClick={() => onRemoveCustomerFromWidget(customer.id)}
-                    >
-                      ×
-                    </button>
+                    {customer.widgetCount > 1 && (
+                      <span className="customer-widget-count">{customer.widgetCount}×</span>
+                    )}
+                    <div className="customer-card-buttons">
+                      <button
+                        type="button"
+                        className="customer-card-duplicate"
+                        aria-label={`${customer.name} duplizieren`}
+                        onClick={(event) => { event.stopPropagation(); onAddCustomerToWidget(customer.id) }}
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        className="customer-card-remove"
+                        aria-label={`${customer.name} aus dem Widget entfernen`}
+                        onClick={() => onRemoveCustomerFromWidget(customer.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
                     <span className="customer-card-action">In Plan ziehen</span>
                   </div>
                 </article>
